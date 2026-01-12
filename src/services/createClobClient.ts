@@ -14,7 +14,7 @@ const createClobClient = async (): Promise<ClobClient> => {
     let clobClient = new ClobClient(
         host,
         chainId,
-        wallet,
+        wallet as any,
         undefined,
         SignatureType.POLY_PROXY,
         PROXY_WALLET as string
@@ -34,7 +34,7 @@ const createClobClient = async (): Promise<ClobClient> => {
     clobClient = new ClobClient(
         host,
         chainId,
-        wallet,
+        wallet as any,
         creds,
         SignatureType.POLY_PROXY,
         PROXY_WALLET as string

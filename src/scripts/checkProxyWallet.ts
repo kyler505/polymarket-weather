@@ -179,7 +179,7 @@ const checkProxyWallet = async () => {
 
         // Check address type via RPC
         try {
-            const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+            const provider = new ethers.JsonRpcProvider(RPC_URL);
 
             const eoaCode = await provider.getCode(eoaAddress);
             const proxyCode = await provider.getCode(PROXY_WALLET);

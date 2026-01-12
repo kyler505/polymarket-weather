@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import { ethers, EventLog } from 'ethers';
 import { ENV } from '../config/env';
 import fetchData from '../utils/fetchData';
 
@@ -23,7 +23,7 @@ async function computeGnosisSafeAddress() {
     console.log('📋 Searching for Gnosis Safe Proxy via events\n');
 
     try {
-        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
 
         // ABI for ProxyCreation event
         const proxyFactoryAbi = ['event ProxyCreation(address indexed proxy, address singleton)'];
@@ -73,8 +73,9 @@ async function computeGnosisSafeAddress() {
 
                 // Check each created proxy
                 for (const event of events) {
-                    if (event.args && event.args.proxy) {
-                        const proxyAddress = event.args.proxy;
+                    const eventLog = event as EventLog;
+                    if (eventLog.args && eventLog.args.proxy) {
+                        const proxyAddress = eventLog.args.proxy;
 
                         // Check if our EOA owns this proxy
                         // For Gnosis Safe check owners
@@ -144,7 +145,7 @@ async function computeGnosisSafeAddress() {
     const suspectAddress = '0xd62531bc536bff72394fc5ef715525575787e809';
 
     try {
-        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
 
         // Check if this is a smart contract
         const code = await provider.getCode(suspectAddress);

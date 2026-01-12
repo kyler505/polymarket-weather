@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import { ethers, JsonRpcProvider } from 'ethers';
 import { AssetType, ClobClient, getContractConfig } from '@polymarket/clob-client';
 import { SignatureType } from '@polymarket/order-utils';
 import { ENV } from '../config/env';
@@ -24,7 +24,7 @@ const USDC_ABI = [
     'function decimals() view returns (uint8)',
 ];
 
-const buildClobClient = async (provider: ethers.providers.JsonRpcProvider): Promise<ClobClient> => {
+const buildClobClient = async (provider: JsonRpcProvider): Promise<ClobClient> => {
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
     const code = await provider.getCode(PROXY_WALLET);
     const isProxySafe = code !== '0x';
@@ -37,7 +37,7 @@ const buildClobClient = async (provider: ethers.providers.JsonRpcProvider): Prom
     const initialClient = new ClobClient(
         CLOB_HTTP_URL,
         POLYGON_CHAIN_ID,
-        wallet,
+        wallet as any,
         undefined,
         signatureType,
         isProxySafe ? PROXY_WALLET : undefined
@@ -81,7 +81,7 @@ const buildClobClient = async (provider: ethers.providers.JsonRpcProvider): Prom
     return new ClobClient(
         CLOB_HTTP_URL,
         POLYGON_CHAIN_ID,
-        wallet,
+        wallet as any,
         creds,
         signatureType,
         isProxySafe ? PROXY_WALLET : undefined
@@ -90,7 +90,7 @@ const buildClobClient = async (provider: ethers.providers.JsonRpcProvider): Prom
 
 const formatClobAmount = (raw: string, decimals: number): string => {
     try {
-        return ethers.utils.formatUnits(raw, decimals);
+        return ethers.formatUnits(raw, decimals);
     } catch {
         const numeric = parseFloat(raw);
         if (!Number.isFinite(numeric)) {
@@ -102,7 +102,7 @@ const formatClobAmount = (raw: string, decimals: number): string => {
 
 const syncPolymarketAllowanceCache = async (
     decimals: number,
-    provider: ethers.providers.JsonRpcProvider
+    provider: JsonRpcProvider
 ) => {
     try {
         console.log('🔄 Syncing Polymarket allowance cache...');
@@ -182,7 +182,7 @@ async function checkAndSetAllowance() {
     console.log('🔍 Checking USDC balance and allowance...\n');
 
     // Connect to Polygon
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
     // Create USDC contract instance
@@ -197,10 +197,10 @@ async function checkAndSetAllowance() {
             USDC_CONTRACT_ADDRESS.toLowerCase() === POLYMARKET_COLLATERAL_LOWER;
 
         // Local token balance & allowance (whatever is configured in .env)
-        const localBalance = await usdcContract.balanceOf(PROXY_WALLET);
-        const localAllowance = await usdcContract.allowance(PROXY_WALLET, POLYMARKET_EXCHANGE);
-        const localBalanceFormatted = ethers.utils.formatUnits(localBalance, decimals);
-        const localAllowanceFormatted = ethers.utils.formatUnits(localAllowance, decimals);
+        const localBalance: bigint = await usdcContract.balanceOf(PROXY_WALLET);
+        const localAllowance: bigint = await usdcContract.allowance(PROXY_WALLET, POLYMARKET_EXCHANGE);
+        const localBalanceFormatted = ethers.formatUnits(localBalance, decimals);
+        const localAllowanceFormatted = ethers.formatUnits(localAllowance, decimals);
 
         console.log(
             `💰 Your USDC Balance (${USDC_CONTRACT_ADDRESS}): ${localBalanceFormatted} USDC`
@@ -214,9 +214,9 @@ async function checkAndSetAllowance() {
             try {
                 const nativeContract = new ethers.Contract(NATIVE_USDC_ADDRESS, USDC_ABI, wallet);
                 const nativeDecimals = await nativeContract.decimals();
-                const nativeBalance = await nativeContract.balanceOf(PROXY_WALLET);
-                if (!nativeBalance.isZero()) {
-                    const nativeFormatted = ethers.utils.formatUnits(nativeBalance, nativeDecimals);
+                const nativeBalance: bigint = await nativeContract.balanceOf(PROXY_WALLET);
+                if (nativeBalance > 0n) {
+                    const nativeFormatted = ethers.formatUnits(nativeBalance, nativeDecimals);
                     console.log('ℹ️  Detected native USDC (Polygon PoS) balance:');
                     console.log(`    ${nativeFormatted} tokens at ${NATIVE_USDC_ADDRESS}`);
                     console.log(
@@ -235,19 +235,19 @@ async function checkAndSetAllowance() {
         const polymarketDecimals = usesPolymarketCollateral
             ? decimals
             : await polymarketContract.decimals();
-        const polymarketBalance = usesPolymarketCollateral
+        const polymarketBalance: bigint = usesPolymarketCollateral
             ? localBalance
             : await polymarketContract.balanceOf(PROXY_WALLET);
-        const polymarketAllowance = usesPolymarketCollateral
+        const polymarketAllowance: bigint = usesPolymarketCollateral
             ? localAllowance
             : await polymarketContract.allowance(PROXY_WALLET, POLYMARKET_EXCHANGE);
 
         if (!usesPolymarketCollateral) {
-            const polymarketBalanceFormatted = ethers.utils.formatUnits(
+            const polymarketBalanceFormatted = ethers.formatUnits(
                 polymarketBalance,
                 polymarketDecimals
             );
-            const polymarketAllowanceFormatted = ethers.utils.formatUnits(
+            const polymarketAllowanceFormatted = ethers.formatUnits(
                 polymarketAllowance,
                 polymarketDecimals
             );
@@ -260,20 +260,20 @@ async function checkAndSetAllowance() {
             );
         }
 
-        if (polymarketAllowance.lt(polymarketBalance) || polymarketAllowance.isZero()) {
+        if (polymarketAllowance < polymarketBalance || polymarketAllowance === 0n) {
             console.log('⚠️  Allowance is insufficient or zero!');
             console.log('📝 Setting unlimited allowance for Polymarket...\n');
 
             // Approve unlimited amount (max uint256)
-            const maxAllowance = ethers.constants.MaxUint256;
+            const maxAllowance = ethers.MaxUint256;
 
             // Get current gas price and add 50% buffer
             const feeData = await provider.getFeeData();
             const gasPrice = feeData.gasPrice
-                ? feeData.gasPrice.mul(150).div(100)
-                : ethers.utils.parseUnits('50', 'gwei');
+                ? (feeData.gasPrice * 150n) / 100n
+                : ethers.parseUnits('50', 'gwei');
 
-            console.log(`⛽ Gas Price: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
+            console.log(`⛽ Gas Price: ${ethers.formatUnits(gasPrice, 'gwei')} Gwei`);
 
             const approveTx = await polymarketContract.approve(POLYMARKET_EXCHANGE, maxAllowance, {
                 gasPrice: gasPrice,
@@ -290,11 +290,11 @@ async function checkAndSetAllowance() {
                 console.log(`🔗 Transaction: https://polygonscan.com/tx/${approveTx.hash}\n`);
 
                 // Verify new allowance
-                const newAllowance = await polymarketContract.allowance(
+                const newAllowance: bigint = await polymarketContract.allowance(
                     PROXY_WALLET,
                     POLYMARKET_EXCHANGE
                 );
-                const newAllowanceFormatted = ethers.utils.formatUnits(
+                const newAllowanceFormatted = ethers.formatUnits(
                     newAllowance,
                     polymarketDecimals
                 );
