@@ -388,4 +388,9 @@ export const ENV = {
     MONGO_URI: process.env.MONGO_URI as string,
     RPC_URL: process.env.RPC_URL as string,
     USDC_CONTRACT_ADDRESS: process.env.USDC_CONTRACT_ADDRESS as string,
+    // Wind down mode settings (for wallet migration)
+    WIND_DOWN_MODE: process.env.WIND_DOWN_MODE === 'true',
+    TARGET_WALLET: process.env.TARGET_WALLET && isValidEthereumAddress(process.env.TARGET_WALLET)
+        ? process.env.TARGET_WALLET
+        : undefined,
 };

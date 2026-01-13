@@ -8,6 +8,7 @@ import { exponentialBackoff, sleep, isRateLimitResponse, triggerRateLimitCooldow
 
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG;
+const WIND_DOWN_MODE = ENV.WIND_DOWN_MODE;
 
 // Legacy parameters (for backward compatibility in SELL logic)
 const TRADE_MULTIPLIER = ENV.TRADE_MULTIPLIER;
@@ -201,6 +202,14 @@ const postOrder = async (
         }
     } else if (condition === 'buy') {
         //Buy strategy
+        // Check for wind-down mode - skip all BUY orders
+        if (WIND_DOWN_MODE) {
+            Logger.warning('🔻 WIND DOWN MODE: Skipping BUY order (no new positions)');
+            Logger.info(`Would have bought: $${trade.usdcSize.toFixed(2)} on ${trade.slug || trade.asset}`);
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true });
+            return;
+        }
+
         Logger.info('Executing BUY strategy...');
 
         Logger.info(`Your balance: $${my_balance.toFixed(2)}`);
