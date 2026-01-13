@@ -285,7 +285,7 @@ const tradeExecutor = async (clobClient: ClobClient) => {
     }
 
     let lastCheck = Date.now();
-    let lastWaitingLog = Date.now();
+    let waitingStateLogged = false;
 
     while (isRunning) {
         // Check for rate limit cooldown before processing
@@ -296,6 +296,7 @@ const tradeExecutor = async (clobClient: ClobClient) => {
         if (TRADE_AGGREGATION_ENABLED) {
             // Process with aggregation logic
             if (trades.length > 0) {
+                waitingStateLogged = false; // Reset logging state
                 Logger.clearLine();
                 Logger.info(
                     `📥 ${trades.length} new trade${trades.length > 1 ? 's' : ''} detected`
@@ -322,6 +323,7 @@ const tradeExecutor = async (clobClient: ClobClient) => {
             // Check for ready aggregated trades
             const readyAggregations = getReadyAggregatedTrades();
             if (readyAggregations.length > 0) {
+                waitingStateLogged = false; // Reset logging state
                 Logger.clearLine();
                 Logger.header(
                     `⚡ ${readyAggregations.length} AGGREGATED TRADE${readyAggregations.length > 1 ? 'S' : ''} READY`
@@ -330,9 +332,9 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                 lastCheck = Date.now();
             }
 
-            // Update waiting message (less frequently to reduce log noise)
+            // Update waiting message (only once per idle state)
             if (trades.length === 0 && readyAggregations.length === 0) {
-                if (Date.now() - lastWaitingLog > 2000) {
+                if (!waitingStateLogged) {
                     const bufferedCount = tradeAggregationBuffer.size;
                     if (bufferedCount > 0) {
                         Logger.waiting(
@@ -342,12 +344,13 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                     } else {
                         Logger.waiting(USER_ADDRESSES.length);
                     }
-                    lastWaitingLog = Date.now();
+                    waitingStateLogged = true;
                 }
             }
         } else {
             // Original non-aggregation logic
             if (trades.length > 0) {
+                waitingStateLogged = false; // Reset logging state
                 Logger.clearLine();
                 Logger.header(
                     `⚡ ${trades.length} NEW TRADE${trades.length > 1 ? 'S' : ''} TO COPY`
@@ -355,10 +358,10 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                 await doTrading(clobClient, trades);
                 lastCheck = Date.now();
             } else {
-                // Update waiting message less frequently
-                if (Date.now() - lastWaitingLog > 2000) {
+                // Update waiting message (only once per idle state)
+                if (!waitingStateLogged) {
                     Logger.waiting(USER_ADDRESSES.length);
-                    lastWaitingLog = Date.now();
+                    waitingStateLogged = true;
                 }
             }
         }
