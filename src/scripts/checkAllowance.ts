@@ -24,69 +24,8 @@ const USDC_ABI = [
     'function decimals() view returns (uint8)',
 ];
 
-const buildClobClient = async (provider: JsonRpcProvider): Promise<ClobClient> => {
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    const code = await provider.getCode(PROXY_WALLET);
-    const isProxySafe = code !== '0x';
-    const signatureType = isProxySafe ? SignatureType.POLY_GNOSIS_SAFE : SignatureType.EOA;
-    const originalConsoleLog = console.log;
-    const originalConsoleError = console.error;
-    console.log = function () {};
-    console.error = function () {};
+import createClobClient from '../utils/createClobClient';
 
-    const initialClient = new ClobClient(
-        CLOB_HTTP_URL,
-        POLYGON_CHAIN_ID,
-        wallet as any,
-        undefined,
-        signatureType,
-        isProxySafe ? PROXY_WALLET : undefined
-    );
-
-    let creds;
-    let createWarning: string | undefined;
-    let deriveWarning: string | undefined;
-    try {
-        try {
-            creds = await initialClient.createApiKey();
-        } catch (createError: any) {
-            const msg = createError?.response?.data?.error || createError?.message;
-            createWarning = `⚠️  Unable to create new API key${msg ? `: ${msg}` : ''}`;
-        }
-
-        if (!creds?.key) {
-            try {
-                creds = await initialClient.deriveApiKey();
-            } catch (deriveError: any) {
-                const msg = deriveError?.response?.data?.error || deriveError?.message;
-                deriveWarning = `⚠️  Unable to derive API key${msg ? `: ${msg}` : ''}`;
-            }
-        }
-    } finally {
-        console.log = originalConsoleLog;
-        console.error = originalConsoleError;
-    }
-
-    if (createWarning) {
-        console.log(createWarning);
-    }
-    if (deriveWarning) {
-        console.log(deriveWarning);
-    }
-
-    if (!creds?.key) {
-        throw new Error('Failed to obtain Polymarket API credentials');
-    }
-
-    return new ClobClient(
-        CLOB_HTTP_URL,
-        POLYGON_CHAIN_ID,
-        wallet as any,
-        creds,
-        signatureType,
-        isProxySafe ? PROXY_WALLET : undefined
-    );
-};
 
 const formatClobAmount = (raw: string, decimals: number): string => {
     try {
@@ -106,7 +45,7 @@ const syncPolymarketAllowanceCache = async (
 ) => {
     try {
         console.log('🔄 Syncing Polymarket allowance cache...');
-        const clobClient = await buildClobClient(provider);
+        const clobClient = await createClobClient();
         const updateParams = {
             asset_type: AssetType.COLLATERAL,
         } as const;
