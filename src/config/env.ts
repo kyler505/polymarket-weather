@@ -117,6 +117,39 @@ const validateNumericConfig = (): void => {
 };
 
 /**
+ * Validate rate limiting configuration
+ */
+const validateRateLimitConfig = (): void => {
+    const executorPollInterval = parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '2000', 10);
+    if (isNaN(executorPollInterval) || executorPollInterval < 500) {
+        throw new Error(
+            `Invalid EXECUTOR_POLL_INTERVAL_MS: ${process.env.EXECUTOR_POLL_INTERVAL_MS}. Must be at least 500ms.`
+        );
+    }
+
+    const retryDelayBase = parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10);
+    if (isNaN(retryDelayBase) || retryDelayBase < 500) {
+        throw new Error(
+            `Invalid RETRY_DELAY_BASE_MS: ${process.env.RETRY_DELAY_BASE_MS}. Must be at least 500ms.`
+        );
+    }
+
+    const retryDelayMax = parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10);
+    if (isNaN(retryDelayMax) || retryDelayMax < retryDelayBase) {
+        throw new Error(
+            `Invalid RETRY_DELAY_MAX_MS: ${process.env.RETRY_DELAY_MAX_MS}. Must be >= RETRY_DELAY_BASE_MS.`
+        );
+    }
+
+    const rateLimitCooldown = parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10);
+    if (isNaN(rateLimitCooldown) || rateLimitCooldown < 10000) {
+        throw new Error(
+            `Invalid RATE_LIMIT_COOLDOWN_MS: ${process.env.RATE_LIMIT_COOLDOWN_MS}. Must be at least 10000ms (10s).`
+        );
+    }
+};
+
+/**
  * Validate URL formats
  */
 const validateUrls = (): void => {
@@ -173,6 +206,7 @@ const validateUrls = (): void => {
 validateRequiredEnv();
 validateAddresses();
 validateNumericConfig();
+validateRateLimitConfig();
 validateUrls();
 
 // Parse USER_ADDRESSES: supports both comma-separated string and JSON array
@@ -339,6 +373,12 @@ export const ENV = {
     // Network settings
     REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),
     NETWORK_RETRY_LIMIT: parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10),
+    // Rate limiting settings
+    EXECUTOR_POLL_INTERVAL_MS: parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '2000', 10),
+    MONITOR_POLL_JITTER_MS: parseInt(process.env.MONITOR_POLL_JITTER_MS || '500', 10),
+    RETRY_DELAY_BASE_MS: parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10),
+    RETRY_DELAY_MAX_MS: parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10),
+    RATE_LIMIT_COOLDOWN_MS: parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10),
     // Trade aggregation settings
     TRADE_AGGREGATION_ENABLED: process.env.TRADE_AGGREGATION_ENABLED === 'true',
     TRADE_AGGREGATION_WINDOW_SECONDS: parseInt(

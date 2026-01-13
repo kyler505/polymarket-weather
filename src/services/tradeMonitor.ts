@@ -2,6 +2,7 @@ import { ENV } from '../config/env';
 import { getUserActivityModel, getUserPositionModel } from '../models/userHistory';
 import fetchData from '../utils/fetchData';
 import Logger from '../utils/logger';
+import { addJitter, waitForCooldown } from '../utils/rateLimiter';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const TOO_OLD_TIMESTAMP = ENV.TOO_OLD_TIMESTAMP;
@@ -249,9 +250,15 @@ const tradeMonitor = async () => {
     }
 
     while (isRunning) {
+        // Check for rate limit cooldown before fetching
+        await waitForCooldown();
+
         await fetchTradeData();
         if (!isRunning) break;
-        await new Promise((resolve) => setTimeout(resolve, FETCH_INTERVAL * 1000));
+
+        // Add jitter to fetch interval to avoid predictable patterns
+        const jitteredInterval = addJitter(FETCH_INTERVAL * 1000, 0.25);
+        await new Promise((resolve) => setTimeout(resolve, jitteredInterval));
     }
 
     Logger.info('Trade monitor stopped');

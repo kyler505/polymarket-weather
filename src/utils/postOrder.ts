@@ -4,6 +4,7 @@ import { UserActivityInterface, UserPositionInterface } from '../interfaces/User
 import { getUserActivityModel } from '../models/userHistory';
 import Logger from './logger';
 import { calculateOrderSize, getTradeMultiplier } from '../config/copyStrategy';
+import { exponentialBackoff, sleep, isRateLimitResponse, triggerRateLimitCooldown } from './rateLimiter';
 
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG;
@@ -61,6 +62,24 @@ const isInsufficientBalanceOrAllowanceError = (message: string | undefined): boo
     }
     const lower = message.toLowerCase();
     return lower.includes('not enough balance') || lower.includes('allowance');
+};
+
+/**
+ * Check if error message indicates rate limiting (Cloudflare block, etc.)
+ */
+const isRateLimitError = (message: string | undefined): boolean => {
+    if (!message) {
+        return false;
+    }
+    const lower = message.toLowerCase();
+    return (
+        lower.includes('been blocked') ||
+        lower.includes('cloudflare') ||
+        lower.includes('rate limit') ||
+        lower.includes('too many requests') ||
+        lower.includes('403') ||
+        lower.includes('429')
+    );
 };
 
 const postOrder = async (
@@ -146,10 +165,26 @@ const postOrder = async (
                     );
                     break;
                 }
+
+                // Check for rate limiting
+                if (isRateLimitError(errorMessage)) {
+                    Logger.warning(`🚫 Rate limit detected in order response`);
+                    triggerRateLimitCooldown();
+                    // Don't count this as a retry - abort and let cooldown happen
+                    break;
+                }
+
                 retry += 1;
                 Logger.warning(
                     `Order failed (attempt ${retry}/${RETRY_LIMIT})${errorMessage ? ` - ${errorMessage}` : ''}`
                 );
+
+                // Add exponential backoff delay before next retry
+                if (retry < RETRY_LIMIT) {
+                    const backoffDelay = exponentialBackoff(retry);
+                    Logger.info(`⏳ Waiting ${(backoffDelay / 1000).toFixed(1)}s before retry...`);
+                    await sleep(backoffDelay);
+                }
             }
         }
         if (abortDueToFunds) {
@@ -269,10 +304,26 @@ const postOrder = async (
                     );
                     break;
                 }
+
+                // Check for rate limiting
+                if (isRateLimitError(errorMessage)) {
+                    Logger.warning(`🚫 Rate limit detected in order response`);
+                    triggerRateLimitCooldown();
+                    // Don't count this as a retry - abort and let cooldown happen
+                    break;
+                }
+
                 retry += 1;
                 Logger.warning(
                     `Order failed (attempt ${retry}/${RETRY_LIMIT})${errorMessage ? ` - ${errorMessage}` : ''}`
                 );
+
+                // Add exponential backoff delay before next retry
+                if (retry < RETRY_LIMIT) {
+                    const backoffDelay = exponentialBackoff(retry);
+                    Logger.info(`⏳ Waiting ${(backoffDelay / 1000).toFixed(1)}s before retry...`);
+                    await sleep(backoffDelay);
+                }
             }
         }
         if (abortDueToFunds) {
@@ -459,10 +510,26 @@ const postOrder = async (
                     );
                     break;
                 }
+
+                // Check for rate limiting
+                if (isRateLimitError(errorMessage)) {
+                    Logger.warning(`🚫 Rate limit detected in order response`);
+                    triggerRateLimitCooldown();
+                    // Don't count this as a retry - abort and let cooldown happen
+                    break;
+                }
+
                 retry += 1;
                 Logger.warning(
                     `Order failed (attempt ${retry}/${RETRY_LIMIT})${errorMessage ? ` - ${errorMessage}` : ''}`
                 );
+
+                // Add exponential backoff delay before next retry
+                if (retry < RETRY_LIMIT) {
+                    const backoffDelay = exponentialBackoff(retry);
+                    Logger.info(`⏳ Waiting ${(backoffDelay / 1000).toFixed(1)}s before retry...`);
+                    await sleep(backoffDelay);
+                }
             }
         }
 

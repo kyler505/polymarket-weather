@@ -6,6 +6,7 @@ import fetchData from '../utils/fetchData';
 import getMyBalance from '../utils/getMyBalance';
 import postOrder from '../utils/postOrder';
 import Logger from '../utils/logger';
+import { addJitter, waitForCooldown } from '../utils/rateLimiter';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
@@ -276,6 +277,7 @@ export const stopTradeExecutor = () => {
 
 const tradeExecutor = async (clobClient: ClobClient) => {
     Logger.success(`Trade executor ready for ${USER_ADDRESSES.length} trader(s)`);
+    Logger.info(`Polling interval: ${ENV.EXECUTOR_POLL_INTERVAL_MS}ms (with ±25% jitter)`);
     if (TRADE_AGGREGATION_ENABLED) {
         Logger.info(
             `Trade aggregation enabled: ${TRADE_AGGREGATION_WINDOW_SECONDS}s window, $${TRADE_AGGREGATION_MIN_TOTAL_USD} minimum`
@@ -283,7 +285,12 @@ const tradeExecutor = async (clobClient: ClobClient) => {
     }
 
     let lastCheck = Date.now();
+    let lastWaitingLog = Date.now();
+
     while (isRunning) {
+        // Check for rate limit cooldown before processing
+        await waitForCooldown();
+
         const trades = await readTempTrades();
 
         if (TRADE_AGGREGATION_ENABLED) {
@@ -323,9 +330,9 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                 lastCheck = Date.now();
             }
 
-            // Update waiting message
+            // Update waiting message (less frequently to reduce log noise)
             if (trades.length === 0 && readyAggregations.length === 0) {
-                if (Date.now() - lastCheck > 300) {
+                if (Date.now() - lastWaitingLog > 2000) {
                     const bufferedCount = tradeAggregationBuffer.size;
                     if (bufferedCount > 0) {
                         Logger.waiting(
@@ -335,7 +342,7 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                     } else {
                         Logger.waiting(USER_ADDRESSES.length);
                     }
-                    lastCheck = Date.now();
+                    lastWaitingLog = Date.now();
                 }
             }
         } else {
@@ -348,16 +355,19 @@ const tradeExecutor = async (clobClient: ClobClient) => {
                 await doTrading(clobClient, trades);
                 lastCheck = Date.now();
             } else {
-                // Update waiting message every 300ms for smooth animation
-                if (Date.now() - lastCheck > 300) {
+                // Update waiting message less frequently
+                if (Date.now() - lastWaitingLog > 2000) {
                     Logger.waiting(USER_ADDRESSES.length);
-                    lastCheck = Date.now();
+                    lastWaitingLog = Date.now();
                 }
             }
         }
 
         if (!isRunning) break;
-        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Use configurable polling interval with jitter to avoid rate limiting
+        const pollInterval = addJitter(ENV.EXECUTOR_POLL_INTERVAL_MS, 0.25);
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
     Logger.info('Trade executor stopped');
