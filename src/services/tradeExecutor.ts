@@ -42,6 +42,11 @@ interface AggregatedTrade {
 // Buffer for aggregating trades
 const tradeAggregationBuffer: Map<string, AggregatedTrade> = new Map();
 
+// Cross-wallet deduplication: tracks recently copied trades to prevent duplicates
+// Key = "conditionId:side", Value = { timestamp, userAddress }
+const recentlyCopiedTrades: Map<string, { timestamp: number; userAddress: string }> = new Map();
+const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
 const readTempTrades = async (): Promise<TradeWithUser[]> => {
     const allTrades: TradeWithUser[] = [];
 
@@ -147,9 +152,24 @@ const getReadyAggregatedTrades = (): AggregatedTrade[] => {
 
 const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
     for (const trade of trades) {
+        // Cross-wallet deduplication check
+        const dedupKey = `${trade.conditionId}:${trade.side}`;
+        const existingCopy = recentlyCopiedTrades.get(dedupKey);
+        const now = Date.now();
+
+        if (existingCopy && now - existingCopy.timestamp < DEDUP_WINDOW_MS) {
+            Logger.info(`🔄 DEDUP: Already copied ${trade.side} on ${trade.slug || trade.conditionId} from ${existingCopy.userAddress.slice(0, 6)}...${existingCopy.userAddress.slice(-4)} - skipping`);
+            const UserActivityDedup = getUserActivityModel(trade.userAddress);
+            await UserActivityDedup.updateOne({ _id: trade._id }, { bot: true });
+            continue;
+        }
+
         // Mark trade as being processed immediately to prevent duplicate processing
         const UserActivity = getUserActivityModel(trade.userAddress);
         await UserActivity.updateOne({ _id: trade._id }, { $set: { botExcutedTime: 1 } });
+
+        // Record this trade for deduplication
+        recentlyCopiedTrades.set(dedupKey, { timestamp: now, userAddress: trade.userAddress });
 
         Logger.trade(trade.userAddress, trade.side || 'UNKNOWN', {
             asset: trade.asset,

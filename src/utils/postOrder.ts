@@ -210,6 +210,14 @@ const postOrder = async (
             return;
         }
 
+        // Check minimum balance - skip if below Polymarket minimum
+        if (my_balance < MIN_ORDER_SIZE_USD) {
+            Logger.warning(`💸 LOW BALANCE: Skipping BUY (balance: $${my_balance.toFixed(2)} < $${MIN_ORDER_SIZE_USD})`);
+            Logger.info(`Would have bought: $${trade.usdcSize.toFixed(2)} on ${trade.slug || trade.asset}`);
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true });
+            return;
+        }
+
         Logger.info('Executing BUY strategy...');
 
         Logger.info(`Your balance: $${my_balance.toFixed(2)}`);
