@@ -24,12 +24,12 @@ async function findProxy() {
         // It used the createProxyWithNonce logic.
 
         // Let's try to query the Polymarket API which usually returns the proxy wallet for a profile
-        const response = await fetch(`https://data-api.polymarket.com/users/${ENV.PRIVATE_KEY_EOA_ADDRESS || ENV.USER_ADDRESSES[0]}`);
+        const response = await fetch(`https://data-api.polymarket.com/users/${ENV.USER_ADDRESSES[0]}`);
         // Wait, data-api doesn't usually give this easily for an address unless we query specific endpoints.
 
         console.log("Checking Polymarket API...");
         // This is a known endpoint that might return user profile info including proxy
-        const profileResp = await fetch(`https://data-api.polymarket.com/profiles?address=${ENV.PRIVATE_KEY_EOA_ADDRESS || ENV.USER_ADDRESSES[0]}`);
+        const profileResp = await fetch(`https://data-api.polymarket.com/profiles?address=${ENV.USER_ADDRESSES[0]}`);
 
         // Let's try to guess/compute it
         console.log("Note: To find your exact Proxy Wallet address, the most reliable way is:");
