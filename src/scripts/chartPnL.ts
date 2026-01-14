@@ -5,6 +5,7 @@ import connectDB, { closeDB } from '../config/db';
 import { ENV } from '../config/env';
 import { getUserActivityModel } from '../models/userHistory';
 import fetchData from '../utils/fetchData';
+import getMyBalance from '../utils/getMyBalance';
 import mongoose from 'mongoose';
 
 interface TradeActivity {
@@ -18,6 +19,7 @@ interface TradeActivity {
     title?: string;
     outcome?: string;
     transactionHash: string;
+    conditionId: string;
 }
 
 interface Inventory {
@@ -181,7 +183,7 @@ const generateChartHtml = (
 const syncTrades = async (walletAddress: string, ActivityModel: any) => {
     console.log('🔄 Syncing trade history from Polymarket API...');
     try {
-        const apiUrl = `https://data-api.polymarket.com/activity?user=${walletAddress}&type=TRADE`;
+        const apiUrl = `https://data-api.polymarket.com/activity?user=${walletAddress}`;
         const activities = await fetchData(apiUrl);
 
         if (!Array.isArray(activities) || activities.length === 0) {
@@ -222,111 +224,146 @@ const chartPnL = async () => {
         // 1. Sync data first
         await syncTrades(walletAddress, ActivityModel);
 
-        // 2. Fetch current positions for Unrealized stats
+        // 2. Fetch current positions for Unrealized stats AND Balance
         let totalUnrealizedPnl = 0;
-        let totalValue = 0;
-        let totalInitialValue = 0;
+        let positionsValue = 0;
+        let usdcBalance = 0;
 
         try {
-            console.log('🔄 Fetching current open positions...');
+            console.log('🔄 Fetching current open positions and balance...');
             const positionsUrl = `https://data-api.polymarket.com/positions?user=${walletAddress}`;
             const positions = await fetchData(positionsUrl);
 
             if (Array.isArray(positions)) {
                  positions.forEach((pos: any) => {
                     totalUnrealizedPnl += pos.cashPnl || 0;
-                    totalValue += pos.currentValue || 0;
-                    totalInitialValue += pos.initialValue || 0;
+                    positionsValue += pos.currentValue || 0;
                 });
             }
+
+            // Fetch Balance
+            usdcBalance = await getMyBalance(walletAddress);
+            console.log(`   USDC Balance: $${usdcBalance.toFixed(2)}`);
+            console.log(`   Positions Value: $${positionsValue.toFixed(2)}`);
             console.log(`   Current Unrealized P/L: $${totalUnrealizedPnl.toFixed(2)}`);
+
         } catch (err) {
-            console.warn('   Warning: Could not fetch open positions for stats.');
+            console.warn('   Warning: Could not fetch open positions/balance for stats.', err);
         }
+
+        const totalPortfolioValue = usdcBalance + positionsValue;
 
         // 3. Calculate Realized PnL from DB
         const activities = await ActivityModel.find({
-            type: 'TRADE'
+            type: { $in: ['TRADE', 'REDEEM'] }
         }).sort({ timestamp: 1 }).lean();
 
         console.log(`\n📅 Processing ${activities.length} historical trades for chart...`);
 
-        // Inventory tracking
-        const inventory: Record<string, Inventory> = {};
-        let cumulativePnL = 0;
         const dataPoints: { date: string; pnl: number; totalPnl: number }[] = [];
+        let cumulativePnL = 0;
 
+        // Inventory tracking: { [assetId]: { size: number, avgPrice: number } }
+        // Note: For simplicity, assuming single asset tracking or simplified generic FIFO/WACB
+        // Ideally we track per asset. But since user wants specific chart, let's track global PnL.
+        // Wait, WACB must be PER ASSET.
+        // Let's implement PER ASSET tracking for accuracy.
+
+        /*
+           Simpler approach given likely usage:
+           We track a map of asset -> { size, avgPrice }
+        */
+        const inventory = new Map<string, { size: number, avgPrice: number }>();
+
+        // We also need a way to add points to the chart.
+        // We will add a point every time 'cumulativePnL' changes (on SELL).
+
+        // Add 0,0 start point
         if (activities.length > 0) {
-            // Initial point
-            dataPoints.push({
-                date: new Date((activities[0] as TradeActivity).timestamp * 1000).toLocaleString(),
+             dataPoints.push({
+                date: new Date((activities[0].timestamp || 0) * 1000 - 1000).toLocaleString(),
                 pnl: 0,
                 totalPnl: 0
             });
         }
 
-        for (const activity of activities) {
-            const trade = activity as unknown as TradeActivity;
-            const assetId = trade.asset;
+        for (const trade of activities) {
+            // @ts-ignore
+            const price = trade.price || 0;
+            // @ts-ignore
+            const size = trade.size || 0;
+            const trackId = trade.conditionId || trade.asset || 'unknown';
 
-            if (!inventory[assetId]) {
-                inventory[assetId] = { size: 0, avgPrice: 0 };
+            // Initialize asset inv if needed
+            // NOTE: Using a single 'global' inventory was the bug if the user traded multiple assets.
+            // The previous code had `let currentInv` outside the loop, implying it blended all assets!
+            // VERY LIKELY THE BUG for specific PnL accuracy if multiple assets traded.
+            // But here the user only traded one event.
+            // Still, per-asset is better.
+
+            // However, to keep it simple and consistent with previous working code (debugPnL.ts worked),
+            // I'll stick to the single 'global' inv logic if that's what debugPnL used...
+            // WAIT, debugPnL used single `currentInv`.
+            // Users trades: Bulls vs Rockets over 224.5 AND 225.5.
+            // These are TWO different assets.
+            // Blending them is technically WRONG.
+            // BUT debugPnL.ts produced $14.15 which was CORRECT.
+            // Why? Because AvgPrice ~0.47 for both.
+
+            // Let's implement proper per-asset tracking to be safe.
+            let inv = inventory.get(trackId);
+            if (!inv) {
+                inv = { size: 0, avgPrice: 0 };
+                inventory.set(trackId, inv);
             }
-
-            const currentInv = inventory[assetId];
 
             if (trade.side === 'BUY') {
-                const totalCost = (currentInv.size * currentInv.avgPrice) + (trade.size * trade.price);
-                const totalSize = currentInv.size + trade.size;
+                const totalValue = (inv.avgPrice * inv.size) + (price * size);
+                const totalSize = inv.size + size;
+                inv.avgPrice = totalValue / totalSize;
+                inv.size = totalSize;
 
-                if (totalSize === 0) {
-                    currentInv.avgPrice = 0;
-                    currentInv.size = 0;
-                } else {
-                    currentInv.avgPrice = totalCost / totalSize;
-                    currentInv.size = totalSize;
-                }
+                // Add data point for BUY (PnL doesn't change, but time progresses)
+                dataPoints.push({
+                    date: new Date((trade.timestamp || 0) * 1000).toLocaleString(),
+                    pnl: 0,
+                    totalPnl: cumulativePnL
+                });
             }
-            else if (trade.side === 'SELL') {
-                const sizeToSell = Math.min(trade.size, currentInv.size > 0 ? currentInv.size : trade.size);
-                const realizedPnL = (trade.price - currentInv.avgPrice) * sizeToSell;
+            else if (trade.side === 'SELL' || trade.type === 'REDEEM') {
+                const executionPrice = trade.type === 'REDEEM' ? 1.0 : price;
+                const sizeToSell = Math.min(size, inv.size > 0 ? inv.size : size);
+
+                const realizedPnL = (executionPrice - inv.avgPrice) * sizeToSell;
 
                 cumulativePnL += realizedPnL;
 
-                currentInv.size -= trade.size;
-                if (currentInv.size <= 0) {
-                    currentInv.size = 0;
-                    currentInv.avgPrice = 0;
+                inv.size -= size;
+                if (inv.size <= 0) {
+                    inv.size = 0;
+                    inv.avgPrice = 0;
                 }
 
-                // Add data point on Sell
+                // Add data point on Sell/Redeem
                 dataPoints.push({
-                    date: new Date(trade.timestamp * 1000).toLocaleString(),
+                    date: new Date((trade.timestamp || 0) * 1000).toLocaleString(),
                     pnl: realizedPnL,
                     totalPnl: cumulativePnL
                 });
             }
         }
 
-        // If we only have buys, we should at least show a point at the end with 0 pnl so the chart isn't empty
-        if (dataPoints.length === 1 && activities.length > 0) {
-             dataPoints.push({
-                date: new Date().toLocaleString(),
-                pnl: 0,
-                totalPnl: 0
-            });
-        }
+        // Derive Initial Investment
+        // Logic: Equity = Initial + Realized + Unrealized
+        // Initial = Equity - Realized - Unrealized
+        const derivedInitialInvestment = totalPortfolioValue - cumulativePnL - totalUnrealizedPnl;
 
         console.log(`   Realized PnL: $${cumulativePnL.toFixed(2)}`);
+        console.log(`   Total Portfolio Value: $${totalPortfolioValue.toFixed(2)}`);
+        console.log(`   Derived Initial Investment: $${derivedInitialInvestment.toFixed(2)}`);
 
         // Generate HTML
-        const html = generateChartHtml(
-            dataPoints,
-            totalUnrealizedPnl,
-            cumulativePnL,
-            totalValue,
-            totalInitialValue
-        );
+        const html = generateChartHtml(dataPoints, totalUnrealizedPnl, cumulativePnL, totalPortfolioValue, derivedInitialInvestment);
 
         const reportsDir = path.join(process.cwd(), 'reports');
         if (!fs.existsSync(reportsDir)) {
@@ -340,7 +377,7 @@ const chartPnL = async () => {
         console.log(`📄 Open file://${outputPath} in your browser to view.`);
 
     } catch (error) {
-        console.error('Error calculating PnL:', error);
+        console.error('Error generating chart:', error);
     } finally {
         await closeDB();
     }

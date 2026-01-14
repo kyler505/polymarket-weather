@@ -5,6 +5,7 @@ import { getUserActivityModel } from '../models/userHistory';
 import Logger from './logger';
 import { calculateOrderSize, getTradeMultiplier } from '../config/copyStrategy';
 import { exponentialBackoff, sleep, isRateLimitResponse, triggerRateLimitCooldown } from './rateLimiter';
+import refreshPolymarketCache from './refreshPolymarketCache';
 
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG;
@@ -112,6 +113,9 @@ const postOrder = async (
             await UserActivity.updateOne({ _id: trade._id }, { bot: true });
             return;
         }
+
+        // Refresh Polymarket cache before trading
+        await refreshPolymarketCache(trade.asset);
 
         let retry = 0;
         let abortDueToFunds = false;
@@ -248,6 +252,9 @@ const postOrder = async (
         }
 
         let remaining = orderCalc.finalAmount;
+
+        // Refresh Polymarket cache before trading
+        await refreshPolymarketCache(trade.asset);
 
         let retry = 0;
         let abortDueToFunds = false;
@@ -459,6 +466,9 @@ const postOrder = async (
             Logger.warning(`Capping to maximum available: ${my_position.size.toFixed(2)} tokens`);
             remaining = my_position.size;
         }
+
+        // Refresh Polymarket cache before trading
+        await refreshPolymarketCache(trade.asset);
 
         let retry = 0;
         let abortDueToFunds = false;
