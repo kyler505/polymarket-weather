@@ -93,8 +93,8 @@ const checkDiscrepancy = async () => {
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-        // 4. Analysis of CLOSED positions
-        console.log('✅ CLOSED POSITIONS:\n');
+        // 4. Analysis of CLOSED positions (from positions API)
+        console.log('✅ CLOSED POSITIONS (from positions API):\n');
         let totalClosedRealized = 0;
         let totalClosedInitial = 0;
 
@@ -114,7 +114,29 @@ const checkDiscrepancy = async () => {
             console.log(`   • Initial investments: $${totalClosedInitial.toFixed(2)}`);
             console.log(`   • Realized P&L: $${totalClosedRealized.toFixed(2)}\n`);
         } else {
-            console.log('   ❌ No closed positions found in API\n');
+            console.log('   ❌ No closed positions found in positions API\n');
+        }
+
+        // 5. Check for REDEEM events (resolved markets / won positions)
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        console.log('🏆 REDEEMED POSITIONS (won/resolved markets):\n');
+
+        const allActivityUrl = `https://data-api.polymarket.com/activity?user=${PROXY_WALLET}`;
+        const allActivity: Activity[] = await fetchData(allActivityUrl);
+        const redeemEvents = allActivity.filter((a: any) => a.type === 'REDEEM');
+
+        let totalRedeemed = 0;
+        if (redeemEvents.length > 0) {
+            redeemEvents.forEach((redeem: any, idx: number) => {
+                totalRedeemed += redeem.usdcSize || 0;
+                console.log(`${idx + 1}. 🎉 ${redeem.title || 'Unknown'}`);
+                console.log(`   Amount Redeemed: $${(redeem.usdcSize || 0).toFixed(2)}`);
+                console.log(`   TX: ${redeem.transactionHash?.slice(0, 10)}...`);
+                console.log('');
+            });
+            console.log(`   💰 TOTAL REDEEMED: $${totalRedeemed.toFixed(2)}\n`);
+        } else {
+            console.log('   No redeemed positions found\n');
         }
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');

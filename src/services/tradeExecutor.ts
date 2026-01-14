@@ -7,6 +7,7 @@ import getMyBalance from '../utils/getMyBalance';
 import postOrder from '../utils/postOrder';
 import Logger from '../utils/logger';
 import { addJitter, waitForCooldown } from '../utils/rateLimiter';
+import { shouldCopyTrade, recordCopiedMarket, logFilterConfig } from './tradeFilters';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
@@ -152,24 +153,40 @@ const getReadyAggregatedTrades = (): AggregatedTrade[] => {
 
 const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
     for (const trade of trades) {
-        // Cross-wallet deduplication check
+        const UserActivity = getUserActivityModel(trade.userAddress);
+        const now = Date.now();
+
+        // Fetch my positions for filter checks (needed for theme cap)
+        const my_positions: UserPositionInterface[] = await fetchData(
+            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+        );
+
+        // Apply pre-trade filters (price band, per-wallet dedup, theme cap)
+        const filterResult = shouldCopyTrade(trade, trade.userAddress, my_positions);
+        if (!filterResult.copy) {
+            Logger.info(`🚫 FILTERED: ${filterResult.reason}`);
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true });
+            continue;
+        }
+
+        // Cross-wallet deduplication check (different wallets, same market)
         const dedupKey = `${trade.conditionId}:${trade.side}`;
         const existingCopy = recentlyCopiedTrades.get(dedupKey);
-        const now = Date.now();
 
         if (existingCopy && now - existingCopy.timestamp < DEDUP_WINDOW_MS) {
             Logger.info(`🔄 DEDUP: Already copied ${trade.side} on ${trade.slug || trade.conditionId} from ${existingCopy.userAddress.slice(0, 6)}...${existingCopy.userAddress.slice(-4)} - skipping`);
-            const UserActivityDedup = getUserActivityModel(trade.userAddress);
-            await UserActivityDedup.updateOne({ _id: trade._id }, { bot: true });
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true });
             continue;
         }
 
         // Mark trade as being processed immediately to prevent duplicate processing
-        const UserActivity = getUserActivityModel(trade.userAddress);
         await UserActivity.updateOne({ _id: trade._id }, { $set: { botExcutedTime: 1 } });
 
-        // Record this trade for deduplication
+        // Record this trade for deduplication (cross-wallet)
         recentlyCopiedTrades.set(dedupKey, { timestamp: now, userAddress: trade.userAddress });
+
+        // Record copied market for per-wallet dedup filter
+        recordCopiedMarket(trade.conditionId, trade.userAddress);
 
         Logger.trade(trade.userAddress, trade.side || 'UNKNOWN', {
             asset: trade.asset,
@@ -181,9 +198,6 @@ const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
             transactionHash: trade.transactionHash,
         });
 
-        const my_positions: UserPositionInterface[] = await fetchData(
-            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
-        );
         const user_positions: UserPositionInterface[] = await fetchData(
             `https://data-api.polymarket.com/positions?user=${trade.userAddress}`
         );
@@ -303,6 +317,7 @@ const tradeExecutor = async (clobClient: ClobClient) => {
             `Trade aggregation enabled: ${TRADE_AGGREGATION_WINDOW_SECONDS}s window, $${TRADE_AGGREGATION_MIN_TOTAL_USD} minimum`
         );
     }
+    logFilterConfig();
 
     let lastCheck = Date.now();
     let waitingStateLogged = false;

@@ -81,53 +81,81 @@ const MIN_ORDER_SIZE = parseFloat(process.env.SIM_MIN_ORDER_USD || '1.0');
 const MAX_TRADES_LIMIT = parseInt(process.env.SIM_MAX_TRADES || '2000');
 const MIN_TRADER_TRADES = parseInt(process.env.MIN_TRADER_TRADES || '100');
 
-// Known successful traders list (fallback)
+// Known successful traders list (will be replaced with real leaderboard)
 const KNOWN_TRADERS = [
-    '0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b',
-    '0x6bab41a0dc40d6dd4c1a915b8c01969479fd1292',
-    '0xa4b366ad22fc0d06f1e934ff468e8922431a87b8',
+    '0x006cc834cc092684f1b56626e23bedb3835c16ea', // kyler1 - one of your current traders
+    '0xaa7a74b8c754e8aacc1ac2dedb699af0a3224d23', // another of your traders
+    '0xe74a4446efd66a4de690962938f550d8921a40ee', // another of your traders
 ];
 
 async function fetchTraderLeaderboard(): Promise<string[]> {
     try {
-        console.log(colors.cyan('📊 Fetching trader leaderboard from Polymarket...'));
+        console.log(colors.cyan('📊 Fetching top traders from Polymarket leaderboard...'));
 
-        // Try to get top traders from events/markets
-        const response = await axios.get('https://data-api.polymarket.com/markets', {
-            timeout: 10000,
+        // Use the documented v1 leaderboard API
+        const response = await axios.get('https://data-api.polymarket.com/v1/leaderboard', {
+            timeout: 15000,
+            params: {
+                limit: 100,
+                period: 'all', // Options: all, monthly, weekly
+            },
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
             },
         });
 
-        // Extract unique traders from recent activity
-        const traders = new Set<string>();
+        const traders: string[] = [];
 
-        // Try to fetch from popular markets
-        const markets = response.data.slice(0, 5);
-        for (const market of markets) {
-            try {
-                const tradesUrl = `https://data-api.polymarket.com/trades?market=${market.conditionId}&limit=100`;
-                const tradesResp = await axios.get(tradesUrl, { timeout: 5000 });
-
-                tradesResp.data.forEach((trade: any) => {
-                    if (trade.owner) {
-                        traders.add(trade.owner.toLowerCase());
-                    }
-                });
-            } catch (e) {
-                // Skip if market doesn't have trades endpoint
-            }
+        if (response.data && Array.isArray(response.data)) {
+            // Extract trader addresses from leaderboard
+            // API returns: { rank, proxyWallet, userName, pnl, vol }
+            response.data.forEach((entry: any) => {
+                const addr = entry.proxyWallet || entry.address || entry.user || entry.trader;
+                if (addr && typeof addr === 'string' && addr.startsWith('0x')) {
+                    traders.push(addr.toLowerCase());
+                }
+            });
         }
 
-        const traderList = Array.from(traders);
-        console.log(
-            colors.green(`✓ Found ${traderList.length} unique traders from recent activity`)
-        );
+        if (traders.length > 0) {
+            console.log(colors.green(`✓ Found ${traders.length} traders from official leaderboard`));
+            return traders.slice(0, 50); // Top 50 traders
+        }
 
-        return traderList.slice(0, 20); // Top 20 most active
-    } catch (error) {
-        console.log(colors.yellow('⚠️  Could not fetch leaderboard, using known traders list'));
+        throw new Error('No traders found in leaderboard response');
+    } catch (error: any) {
+        console.log(colors.yellow(`⚠️  Leaderboard API error: ${error?.message || 'Unknown error'}`));
+        console.log(colors.yellow('   Trying alternative endpoints...'));
+
+        // Try alternative endpoint format
+        try {
+            const altResponse = await axios.get('https://data-api.polymarket.com/leaderboard', {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                },
+            });
+
+            const traders: string[] = [];
+            if (altResponse.data && Array.isArray(altResponse.data)) {
+                altResponse.data.forEach((entry: any) => {
+                    const addr = entry.address || entry.user || entry.trader;
+                    if (addr && typeof addr === 'string' && addr.startsWith('0x')) {
+                        traders.push(addr.toLowerCase());
+                    }
+                });
+            }
+
+            if (traders.length > 0) {
+                console.log(colors.green(`✓ Found ${traders.length} traders from leaderboard`));
+                return traders.slice(0, 50);
+            }
+        } catch (e) {
+            // Alternative also failed
+        }
+
+        console.log(colors.yellow('⚠️  Using fallback trader list'));
         return KNOWN_TRADERS;
     }
 }
@@ -346,28 +374,57 @@ async function simulateTrader(traderAddress: string): Promise<TraderResult> {
             } else if (trade.side === 'SELL') {
                 if (positions.has(positionKey)) {
                     const pos = positions.get(positionKey)!;
-                    const sellAmount = Math.min(orderSize, pos.currentValue);
 
-                    pos.trades.push({
-                        timestamp: trade.timestamp,
-                        side: 'SELL',
-                        price: trade.price,
-                        size: sellAmount / trade.price,
-                        usdcSize: sellAmount,
-                        traderPercent: traderPercent * 100,
-                        yourSize: sellAmount,
-                    });
+                    // Calculate how many shares we have
+                    const totalShares = pos.trades
+                        .filter((t) => t.side === 'BUY')
+                        .reduce((sum, t) => sum + t.size, 0);
+                    const soldShares = pos.trades
+                        .filter((t) => t.side === 'SELL')
+                        .reduce((sum, t) => sum + t.size, 0);
+                    const availableShares = totalShares - soldShares;
 
-                    pos.currentValue -= sellAmount;
-                    pos.exitPrice = trade.price;
-                    yourCapital += sellAmount;
+                    if (availableShares > 0) {
+                        // Calculate sell amount based on trader's percentage
+                        const sellShares = Math.min(availableShares, (orderSize / trade.price));
+                        const sellValue = sellShares * trade.price;
 
-                    if (pos.currentValue < 0.01) {
-                        pos.closed = true;
-                        pos.pnl = yourCapital - pos.invested;
+                        pos.trades.push({
+                            timestamp: trade.timestamp,
+                            side: 'SELL',
+                            price: trade.price,
+                            size: sellShares,
+                            usdcSize: sellValue,
+                            traderPercent: traderPercent * 100,
+                            yourSize: sellValue,
+                        });
+
+                        yourCapital += sellValue;
+                        pos.exitPrice = trade.price;
+
+                        // Check if position is fully closed
+                        const remainingShares = availableShares - sellShares;
+                        if (remainingShares < 0.001) {
+                            pos.closed = true;
+
+                            // Calculate P&L for closed position
+                            const totalBought = pos.trades
+                                .filter((t) => t.side === 'BUY')
+                                .reduce((sum, t) => sum + t.usdcSize, 0);
+                            const totalSold = pos.trades
+                                .filter((t) => t.side === 'SELL')
+                                .reduce((sum, t) => sum + t.usdcSize, 0);
+                            pos.pnl = totalSold - totalBought;
+                            pos.currentValue = 0;
+                        } else {
+                            // Update current value for partially sold position
+                            pos.currentValue = remainingShares * trade.price;
+                        }
+
+                        copiedTrades++;
+                    } else {
+                        skippedTrades++;
                     }
-
-                    copiedTrades++;
                 } else {
                     skippedTrades++;
                 }

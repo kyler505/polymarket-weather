@@ -437,4 +437,11 @@ export const ENV = {
     SLIPPAGE_RETRY_RELAXATION_PERCENT: parseFloat(
         process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT || '30'
     ),
+    // Trade filter settings
+    FILTER_PRICE_BAND_ENABLED: process.env.FILTER_PRICE_BAND_ENABLED !== 'false', // Enabled by default
+    FILTER_PRICE_MIN: parseFloat(process.env.FILTER_PRICE_MIN || '0.20'),
+    FILTER_PRICE_MAX: parseFloat(process.env.FILTER_PRICE_MAX || '0.80'),
+    FILTER_MARKET_DEDUP_ENABLED: process.env.FILTER_MARKET_DEDUP_ENABLED !== 'false', // Enabled by default
+    FILTER_THEME_CAP_ENABLED: process.env.FILTER_THEME_CAP_ENABLED !== 'false', // Enabled by default
+    FILTER_THEME_CAP_PERCENT: parseInt(process.env.FILTER_THEME_CAP_PERCENT || '30', 10),
 };
