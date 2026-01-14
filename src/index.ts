@@ -7,6 +7,8 @@ import Logger from './utils/logger';
 import { performHealthCheck, logHealthCheck } from './utils/healthCheck';
 
 import { startRedemptionService, stopRedemptionService } from './services/redemptionService';
+import { startPositionManager, stopPositionManager } from './services/positionManager';
+import { updateAllTraderScores } from './services/traderAnalytics';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const PROXY_WALLET = ENV.PROXY_WALLET;
@@ -29,6 +31,7 @@ const gracefulShutdown = async (signal: string) => {
         stopTradeMonitor();
         stopTradeExecutor();
         stopRedemptionService();
+        stopPositionManager();
 
         // Give services time to finish current operations
         Logger.info('Waiting for services to finish current operations...');
@@ -101,6 +104,13 @@ export const main = async () => {
         tradeExecutor(clobClient);
 
         startRedemptionService();
+        startPositionManager();
+
+        // Initial trader scoring update (if enabled)
+        if (ENV.TRADER_SCORING_ENABLED) {
+            Logger.info('Updating initial trader scores...');
+            updateAllTraderScores().catch(err => Logger.warning(`Initial trader scoring failed: ${err}`));
+        }
 
         // test(clobClient);
     } catch (error) {

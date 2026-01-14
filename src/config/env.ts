@@ -444,4 +444,22 @@ export const ENV = {
     FILTER_MARKET_DEDUP_ENABLED: process.env.FILTER_MARKET_DEDUP_ENABLED !== 'false', // Enabled by default
     FILTER_THEME_CAP_ENABLED: process.env.FILTER_THEME_CAP_ENABLED !== 'false', // Enabled by default
     FILTER_THEME_CAP_PERCENT: parseInt(process.env.FILTER_THEME_CAP_PERCENT || '30', 10),
+
+    // Stop-Loss / Take-Profit settings
+    STOP_LOSS_ENABLED: process.env.STOP_LOSS_ENABLED === 'true',
+    STOP_LOSS_PERCENT: parseFloat(process.env.STOP_LOSS_PERCENT || '20'),
+    TAKE_PROFIT_ENABLED: process.env.TAKE_PROFIT_ENABLED === 'true',
+    TAKE_PROFIT_PERCENT: parseFloat(process.env.TAKE_PROFIT_PERCENT || '50'),
+    TRAILING_STOP_ENABLED: process.env.TRAILING_STOP_ENABLED === 'true',
+    TRAILING_STOP_PERCENT: parseFloat(process.env.TRAILING_STOP_PERCENT || '15'),
+    POSITION_CHECK_INTERVAL_MS: parseInt(process.env.POSITION_CHECK_INTERVAL_MS || '60000', 10), // 1 minute
+    SL_TP_MIN_PRICE_PERCENT: parseFloat(process.env.SL_TP_MIN_PRICE_PERCENT || '50'), // Min % of expected price for SL sells
+
+    // Trader scoring / dynamic multiplier settings
+    TRADER_SCORING_ENABLED: process.env.TRADER_SCORING_ENABLED === 'true',
+    HOT_STREAK_THRESHOLD: parseInt(process.env.HOT_STREAK_THRESHOLD || '5', 10), // Consecutive wins
+    COLD_STREAK_THRESHOLD: parseInt(process.env.COLD_STREAK_THRESHOLD || '3', 10), // Consecutive losses
+    MAX_DYNAMIC_MULTIPLIER: parseFloat(process.env.MAX_DYNAMIC_MULTIPLIER || '1.5'),
+    MIN_DYNAMIC_MULTIPLIER: parseFloat(process.env.MIN_DYNAMIC_MULTIPLIER || '0.5'),
+    TRADER_SCORE_LOOKBACK_DAYS: parseInt(process.env.TRADER_SCORE_LOOKBACK_DAYS || '7', 10),
 };
