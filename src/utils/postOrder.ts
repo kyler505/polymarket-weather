@@ -255,9 +255,6 @@ const postOrder = async (
 
         let remaining = orderCalc.finalAmount;
 
-        // Refresh Polymarket cache before trading
-        await refreshPolymarketCache(trade.asset);
-
         let retry = 0;
         let abortDueToFunds = false;
         let totalBoughtTokens = 0; // Track total tokens bought for this trade
@@ -338,6 +335,10 @@ const postOrder = async (
             Logger.info(
                 `Creating order: $${orderSize.toFixed(2)} @ $${minPriceAsk.price} (Balance: $${my_balance.toFixed(2)})`
             );
+
+            // Refresh cache RIGHT before creating order to minimize staleness
+            await refreshPolymarketCache(trade.asset);
+
             // Order args logged internally
             const signedOrder = await clobClient.createMarketOrder(order_arges);
             const resp = await clobClient.postOrder(signedOrder, OrderType.FOK);

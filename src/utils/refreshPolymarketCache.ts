@@ -11,6 +11,7 @@ import Logger from './logger';
  */
 export const refreshPolymarketCache = async (tokenId?: string): Promise<boolean> => {
     try {
+        Logger.info('🔄 Refreshing Polymarket cache...');
         const clobClient = await createClobClient();
 
         // Refresh collateral (USDC) cache
@@ -18,7 +19,7 @@ export const refreshPolymarketCache = async (tokenId?: string): Promise<boolean>
             asset_type: AssetType.COLLATERAL,
         } as const;
 
-        await clobClient.updateBalanceAllowance(collateralParams);
+        const result = await clobClient.updateBalanceAllowance(collateralParams);
 
         // If tokenId provided, also refresh conditional token cache
         if (tokenId) {
@@ -30,9 +31,10 @@ export const refreshPolymarketCache = async (tokenId?: string): Promise<boolean>
             await clobClient.updateBalanceAllowance(conditionalParams);
         }
 
+        Logger.info('✅ Polymarket cache refreshed');
         return true;
     } catch (error: any) {
-        Logger.error(`Failed to refresh Polymarket cache: ${error?.message || error}`);
+        Logger.error(`❌ Failed to refresh Polymarket cache: ${error?.message || error}`);
         return false;
     }
 };
