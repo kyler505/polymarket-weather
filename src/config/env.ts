@@ -150,6 +150,38 @@ const validateRateLimitConfig = (): void => {
 };
 
 /**
+ * Validate slippage configuration
+ */
+const validateSlippageConfig = (): void => {
+    const lowVolatility = parseFloat(process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY || '5');
+    if (isNaN(lowVolatility) || lowVolatility < 0 || lowVolatility > 100) {
+        throw new Error(
+            `Invalid MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY: ${process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY}. Must be between 0 and 100.`
+        );
+    }
+
+    const highVolatility = parseFloat(process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY || '15');
+    if (isNaN(highVolatility) || highVolatility < 0 || highVolatility > 100) {
+        throw new Error(
+            `Invalid MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY: ${process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY}. Must be between 0 and 100.`
+        );
+    }
+
+    if (lowVolatility > highVolatility) {
+        throw new Error(
+            `MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY (${lowVolatility}) cannot be greater than MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY (${highVolatility}).`
+        );
+    }
+
+    const retryRelaxation = parseFloat(process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT || '30');
+    if (isNaN(retryRelaxation) || retryRelaxation < 0 || retryRelaxation > 200) {
+        throw new Error(
+            `Invalid SLIPPAGE_RETRY_RELAXATION_PERCENT: ${process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT}. Must be between 0 and 200.`
+        );
+    }
+};
+
+/**
  * Validate URL formats
  */
 const validateUrls = (): void => {
@@ -207,6 +239,7 @@ validateRequiredEnv();
 validateAddresses();
 validateNumericConfig();
 validateRateLimitConfig();
+validateSlippageConfig();
 validateUrls();
 
 // Parse USER_ADDRESSES: supports both comma-separated string and JSON array
@@ -393,4 +426,15 @@ export const ENV = {
     TARGET_WALLET: process.env.TARGET_WALLET && isValidEthereumAddress(process.env.TARGET_WALLET)
         ? process.env.TARGET_WALLET
         : undefined,
+    // Slippage tolerance settings
+    MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY: parseFloat(
+        process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY || '5'
+    ),
+    MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY: parseFloat(
+        process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY || '15'
+    ),
+    SLIPPAGE_RETRY_ENABLED: process.env.SLIPPAGE_RETRY_ENABLED !== 'false', // Enabled by default
+    SLIPPAGE_RETRY_RELAXATION_PERCENT: parseFloat(
+        process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT || '30'
+    ),
 };

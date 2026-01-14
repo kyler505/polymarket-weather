@@ -6,6 +6,8 @@ import Logger from './logger';
 import { calculateOrderSize, getTradeMultiplier } from '../config/copyStrategy';
 import { exponentialBackoff, sleep, isRateLimitResponse, triggerRateLimitCooldown } from './rateLimiter';
 import refreshPolymarketCache from './refreshPolymarketCache';
+import { analyzeOrderBook } from './marketAnalysis';
+import { getBaseSlippageTolerance, calculateDynamicSlippage, isPriceAcceptable } from './slippageCalculator';
 
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG;
@@ -273,8 +275,40 @@ const postOrder = async (
             }, orderBook.asks[0]);
 
             Logger.info(`Best ask: ${minPriceAsk.size} @ $${minPriceAsk.price}`);
-            if (parseFloat(minPriceAsk.price) - 0.05 > trade.price) {
-                Logger.warning('Price slippage too high - skipping trade');
+
+            // Dynamic slippage check using market analysis
+            const marketCondition = analyzeOrderBook(orderBook);
+            const baseSlippage = getBaseSlippageTolerance(marketCondition);
+            const dynamicSlippage = calculateDynamicSlippage(baseSlippage, marketCondition);
+
+            // Apply progressive retry relaxation if enabled
+            let effectiveSlippage = dynamicSlippage;
+            if (ENV.SLIPPAGE_RETRY_ENABLED && retry > 0) {
+                const relaxationMultiplier = 1 + (ENV.SLIPPAGE_RETRY_RELAXATION_PERCENT / 100) * retry;
+                effectiveSlippage = dynamicSlippage * relaxationMultiplier;
+                Logger.info(`📈 Retry ${retry}: Relaxing slippage to ${effectiveSlippage.toFixed(1)}% (was ${dynamicSlippage.toFixed(1)}%)`);
+            }
+
+            const currentPrice = parseFloat(minPriceAsk.price);
+            if (!isPriceAcceptable(currentPrice, trade.price, effectiveSlippage)) {
+                const maxAcceptablePrice = trade.price * (1 + effectiveSlippage / 100);
+                Logger.warning(
+                    `⚠️  Price slippage too high: Current $${currentPrice.toFixed(3)} > Max $${maxAcceptablePrice.toFixed(3)} (${effectiveSlippage.toFixed(1)}% tolerance)`
+                );
+                Logger.info(
+                    `📊 Market: Spread ${marketCondition.spread.toFixed(1)}%, Depth $${marketCondition.depth.toFixed(0)}, Volatility ${marketCondition.volatility}`
+                );
+
+                // If retry enabled and haven't exhausted retries, wait and retry
+                if (ENV.SLIPPAGE_RETRY_ENABLED && retry < RETRY_LIMIT - 1) {
+                    Logger.info(`⏳ Waiting 2s before retry with relaxed slippage...`);
+                    await sleep(2000);
+                    retry++;
+                    continue; // Retry with more relaxed slippage
+                }
+
+                // No retries left or retries disabled - skip trade
+                Logger.warning('❌ Skipping trade after retry attempts');
                 await UserActivity.updateOne({ _id: trade._id }, { bot: true });
                 break;
             }
