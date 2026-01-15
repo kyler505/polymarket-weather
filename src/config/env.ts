@@ -1,5 +1,4 @@
 import * as dotenv from 'dotenv';
-import { CopyStrategy, CopyStrategyConfig, parseTieredMultipliers } from './copyStrategy';
 dotenv.config();
 
 /**
@@ -14,7 +13,6 @@ const isValidEthereumAddress = (address: string): boolean => {
  */
 const validateRequiredEnv = (): void => {
     const required = [
-        'USER_ADDRESSES',
         'PROXY_WALLET',
         'PRIVATE_KEY',
         'CLOB_HTTP_URL',
@@ -37,7 +35,6 @@ const validateRequiredEnv = (): void => {
         console.error('🔧 Quick fix:');
         console.error('   1. Run the setup wizard: npm run setup');
         console.error('   2. Or manually create .env file with all required variables\n');
-        console.error('📖 See docs/QUICK_START.md for detailed instructions\n');
         throw new Error(
             `Missing required environment variables: ${missing.join(', ')}`
         );
@@ -52,11 +49,6 @@ const validateAddresses = (): void => {
         console.error('\n❌ Invalid Wallet Address\n');
         console.error(`Your PROXY_WALLET: ${process.env.PROXY_WALLET}`);
         console.error('Expected format:    0x followed by 40 hexadecimal characters\n');
-        console.error('Example: 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0\n');
-        console.error('💡 Tips:');
-        console.error('   • Copy your wallet address from MetaMask');
-        console.error('   • Make sure it starts with 0x');
-        console.error('   • Should be exactly 42 characters long\n');
         throw new Error(
             `Invalid PROXY_WALLET address format: ${process.env.PROXY_WALLET}`
         );
@@ -68,115 +60,8 @@ const validateAddresses = (): void => {
     ) {
         console.error('\n❌ Invalid USDC Contract Address\n');
         console.error(`Current value: ${process.env.USDC_CONTRACT_ADDRESS}`);
-        console.error('Default value: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174\n');
-        console.error('⚠️  Unless you know what you\'re doing, use the default value!\n');
         throw new Error(
             `Invalid USDC_CONTRACT_ADDRESS format: ${process.env.USDC_CONTRACT_ADDRESS}`
-        );
-    }
-};
-
-/**
- * Validate numeric configuration values
- */
-const validateNumericConfig = (): void => {
-    const fetchInterval = parseInt(process.env.FETCH_INTERVAL || '1', 10);
-    if (isNaN(fetchInterval) || fetchInterval <= 0) {
-        throw new Error(
-            `Invalid FETCH_INTERVAL: ${process.env.FETCH_INTERVAL}. Must be a positive integer.`
-        );
-    }
-
-    const retryLimit = parseInt(process.env.RETRY_LIMIT || '3', 10);
-    if (isNaN(retryLimit) || retryLimit < 1 || retryLimit > 10) {
-        throw new Error(
-            `Invalid RETRY_LIMIT: ${process.env.RETRY_LIMIT}. Must be between 1 and 10.`
-        );
-    }
-
-    const tooOldTimestamp = parseInt(process.env.TOO_OLD_TIMESTAMP || '24', 10);
-    if (isNaN(tooOldTimestamp) || tooOldTimestamp < 1) {
-        throw new Error(
-            `Invalid TOO_OLD_TIMESTAMP: ${process.env.TOO_OLD_TIMESTAMP}. Must be a positive integer (hours).`
-        );
-    }
-
-    const requestTimeout = parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10);
-    if (isNaN(requestTimeout) || requestTimeout < 1000) {
-        throw new Error(
-            `Invalid REQUEST_TIMEOUT_MS: ${process.env.REQUEST_TIMEOUT_MS}. Must be at least 1000ms.`
-        );
-    }
-
-    const networkRetryLimit = parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10);
-    if (isNaN(networkRetryLimit) || networkRetryLimit < 1 || networkRetryLimit > 10) {
-        throw new Error(
-            `Invalid NETWORK_RETRY_LIMIT: ${process.env.NETWORK_RETRY_LIMIT}. Must be between 1 and 10.`
-        );
-    }
-};
-
-/**
- * Validate rate limiting configuration
- */
-const validateRateLimitConfig = (): void => {
-    const executorPollInterval = parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '2000', 10);
-    if (isNaN(executorPollInterval) || executorPollInterval < 500) {
-        throw new Error(
-            `Invalid EXECUTOR_POLL_INTERVAL_MS: ${process.env.EXECUTOR_POLL_INTERVAL_MS}. Must be at least 500ms.`
-        );
-    }
-
-    const retryDelayBase = parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10);
-    if (isNaN(retryDelayBase) || retryDelayBase < 500) {
-        throw new Error(
-            `Invalid RETRY_DELAY_BASE_MS: ${process.env.RETRY_DELAY_BASE_MS}. Must be at least 500ms.`
-        );
-    }
-
-    const retryDelayMax = parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10);
-    if (isNaN(retryDelayMax) || retryDelayMax < retryDelayBase) {
-        throw new Error(
-            `Invalid RETRY_DELAY_MAX_MS: ${process.env.RETRY_DELAY_MAX_MS}. Must be >= RETRY_DELAY_BASE_MS.`
-        );
-    }
-
-    const rateLimitCooldown = parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10);
-    if (isNaN(rateLimitCooldown) || rateLimitCooldown < 10000) {
-        throw new Error(
-            `Invalid RATE_LIMIT_COOLDOWN_MS: ${process.env.RATE_LIMIT_COOLDOWN_MS}. Must be at least 10000ms (10s).`
-        );
-    }
-};
-
-/**
- * Validate slippage configuration
- */
-const validateSlippageConfig = (): void => {
-    const lowVolatility = parseFloat(process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY || '5');
-    if (isNaN(lowVolatility) || lowVolatility < 0 || lowVolatility > 100) {
-        throw new Error(
-            `Invalid MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY: ${process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY}. Must be between 0 and 100.`
-        );
-    }
-
-    const highVolatility = parseFloat(process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY || '15');
-    if (isNaN(highVolatility) || highVolatility < 0 || highVolatility > 100) {
-        throw new Error(
-            `Invalid MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY: ${process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY}. Must be between 0 and 100.`
-        );
-    }
-
-    if (lowVolatility > highVolatility) {
-        throw new Error(
-            `MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY (${lowVolatility}) cannot be greater than MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY (${highVolatility}).`
-        );
-    }
-
-    const retryRelaxation = parseFloat(process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT || '30');
-    if (isNaN(retryRelaxation) || retryRelaxation < 0 || retryRelaxation > 200) {
-        throw new Error(
-            `Invalid SLIPPAGE_RETRY_RELAXATION_PERCENT: ${process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT}. Must be between 0 and 200.`
         );
     }
 };
@@ -186,48 +71,22 @@ const validateSlippageConfig = (): void => {
  */
 const validateUrls = (): void => {
     if (process.env.CLOB_HTTP_URL && !process.env.CLOB_HTTP_URL.startsWith('http')) {
-        console.error('\n❌ Invalid CLOB_HTTP_URL\n');
-        console.error(`Current value: ${process.env.CLOB_HTTP_URL}`);
-        console.error('Default value: https://clob.polymarket.com/\n');
-        console.error('⚠️  Use the default value unless you have a specific reason to change it!\n');
         throw new Error(
             `Invalid CLOB_HTTP_URL: ${process.env.CLOB_HTTP_URL}. Must be a valid HTTP/HTTPS URL.`
         );
     }
 
     if (process.env.CLOB_WS_URL && !process.env.CLOB_WS_URL.startsWith('ws')) {
-        console.error('\n❌ Invalid CLOB_WS_URL\n');
-        console.error(`Current value: ${process.env.CLOB_WS_URL}`);
-        console.error('Default value: wss://ws-subscriptions-clob.polymarket.com/ws\n');
-        console.error('⚠️  Use the default value unless you have a specific reason to change it!\n');
         throw new Error(
             `Invalid CLOB_WS_URL: ${process.env.CLOB_WS_URL}. Must be a valid WebSocket URL (ws:// or wss://).`
         );
     }
 
     if (process.env.RPC_URL && !process.env.RPC_URL.startsWith('http')) {
-        console.error('\n❌ Invalid RPC_URL\n');
-        console.error(`Current value: ${process.env.RPC_URL}`);
-        console.error('Must start with: http:// or https://\n');
-        console.error('💡 Get a free RPC endpoint from:');
-        console.error('   • Infura:  https://infura.io');
-        console.error('   • Alchemy: https://www.alchemy.com');
-        console.error('   • Ankr:    https://www.ankr.com\n');
-        console.error('Example: https://polygon-mainnet.infura.io/v3/YOUR_PROJECT_ID\n');
         throw new Error(`Invalid RPC_URL: ${process.env.RPC_URL}. Must be a valid HTTP/HTTPS URL.`);
     }
 
     if (process.env.MONGO_URI && !process.env.MONGO_URI.startsWith('mongodb')) {
-        console.error('\n❌ Invalid MONGO_URI\n');
-        console.error(`Current value: ${process.env.MONGO_URI}`);
-        console.error('Must start with: mongodb:// or mongodb+srv://\n');
-        console.error('💡 Setup MongoDB Atlas (free):');
-        console.error('   1. Visit https://www.mongodb.com/cloud/atlas/register');
-        console.error('   2. Create a free cluster');
-        console.error('   3. Create database user with password');
-        console.error('   4. Whitelist IP: 0.0.0.0/0 (or your IP)');
-        console.error('   5. Get connection string from "Connect" button\n');
-        console.error('Example: mongodb+srv://username:password@cluster.mongodb.net/database\n');
         throw new Error(
             `Invalid MONGO_URI: ${process.env.MONGO_URI}. Must be a valid MongoDB connection string.`
         );
@@ -237,297 +96,76 @@ const validateUrls = (): void => {
 // Run all validations
 validateRequiredEnv();
 validateAddresses();
-validateNumericConfig();
-validateRateLimitConfig();
-validateSlippageConfig();
 validateUrls();
 
-// Parse USER_ADDRESSES: supports both comma-separated string and JSON array
-const parseUserAddresses = (input: string): string[] => {
-    const trimmed = input.trim();
-    // Check if it's JSON array format
-    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-        try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-                const addresses = parsed
-                    .map((addr) => addr.toLowerCase().trim())
-                    .filter((addr) => addr.length > 0);
-                // Validate each address
-                for (const addr of addresses) {
-                    if (!isValidEthereumAddress(addr)) {
-                        console.error('\n❌ Invalid Trader Address in USER_ADDRESSES\n');
-                        console.error(`Invalid address: ${addr}`);
-                        console.error('Expected format: 0x followed by 40 hexadecimal characters\n');
-                        console.error('💡 Where to find trader addresses:');
-                        console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard');
-                        console.error('   • Predictfolio: https://predictfolio.com\n');
-                        console.error('Example: USER_ADDRESSES=\'0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b\'\n');
-                        throw new Error(`Invalid Ethereum address in USER_ADDRESSES: ${addr}`);
-                    }
-                }
-                return addresses;
-            }
-        } catch (e) {
-            if (e instanceof Error && e.message.includes('Invalid Ethereum address')) {
-                throw e;
-            }
-            throw new Error(
-                `Invalid JSON format for USER_ADDRESSES: ${e instanceof Error ? e.message : String(e)}`
-            );
-        }
-    }
-    // Otherwise treat as comma-separated
-    const addresses = trimmed
-        .split(',')
-        .map((addr) => addr.toLowerCase().trim())
-        .filter((addr) => addr.length > 0);
-    // Validate each address
-    for (const addr of addresses) {
-        if (!isValidEthereumAddress(addr)) {
-            console.error('\n❌ Invalid Trader Address in USER_ADDRESSES\n');
-            console.error(`Invalid address: ${addr}`);
-            console.error('Expected format: 0x followed by 40 hexadecimal characters\n');
-            console.error('💡 Where to find trader addresses:');
-            console.error('   • Polymarket Leaderboard: https://polymarket.com/leaderboard');
-            console.error('   • Predictfolio: https://predictfolio.com\n');
-            console.error('Example: USER_ADDRESSES=\'0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b\'\n');
-            throw new Error(`Invalid Ethereum address in USER_ADDRESSES: ${addr}`);
-        }
-    }
-    return addresses;
-};
-
-/**
- * Parse per-trader multipliers from TRADER_MULTIPLIERS env variable
- * Format: comma-separated multipliers matching USER_ADDRESSES order
- * Example: USER_ADDRESSES="0xabc...,0xdef..." TRADER_MULTIPLIERS="2.0,1.0"
- *
- * @returns Map of trader address (lowercase) to multiplier
- */
-const parseTraderMultipliers = (
-    multipliersStr: string | undefined,
-    addresses: string[]
-): Map<string, number> => {
-    const multiplierMap = new Map<string, number>();
-
-    if (!multipliersStr || multipliersStr.trim() === '') {
-        // No per-trader multipliers configured, use global TRADE_MULTIPLIER
-        return multiplierMap;
-    }
-
-    const multipliers = multipliersStr
-        .split(',')
-        .map(m => m.trim())
-        .filter(m => m.length > 0);
-
-    if (multipliers.length !== addresses.length) {
-        console.warn(`⚠️  TRADER_MULTIPLIERS count (${multipliers.length}) doesn't match USER_ADDRESSES count (${addresses.length})`);
-        console.warn('   Falling back to global TRADE_MULTIPLIER for unmatched traders');
-    }
-
-    for (let i = 0; i < Math.min(multipliers.length, addresses.length); i++) {
-        const multiplier = parseFloat(multipliers[i]);
-        if (isNaN(multiplier) || multiplier <= 0) {
-            console.warn(`⚠️  Invalid multiplier "${multipliers[i]}" for trader ${addresses[i].slice(0, 10)}...`);
-            continue;
-        }
-        multiplierMap.set(addresses[i].toLowerCase(), multiplier);
-    }
-
-    if (multiplierMap.size > 0) {
-        console.log(`✓ Loaded per-trader multipliers for ${multiplierMap.size} traders:`);
-        for (const [addr, mult] of multiplierMap) {
-            console.log(`   ${addr.slice(0, 10)}... → ${mult}x`);
-        }
-    }
-
-    return multiplierMap;
-};
-
-/**
- * Get the multiplier for a specific trader address
- * Falls back to global TRADE_MULTIPLIER if not configured per-trader
- */
-export const getMultiplierForTrader = (traderAddress: string): number => {
-    const addr = traderAddress.toLowerCase();
-    const perTraderMultiplier = ENV.TRADER_MULTIPLIERS.get(addr);
-
-    if (perTraderMultiplier !== undefined) {
-        return perTraderMultiplier;
-    }
-
-    // Fall back to global multiplier
-    return ENV.TRADE_MULTIPLIER;
-};
-
-// Parse copy strategy configuration
-const parseCopyStrategy = (): CopyStrategyConfig => {
-    // Support legacy COPY_PERCENTAGE + TRADE_MULTIPLIER for backward compatibility
-    const hasLegacyConfig = process.env.COPY_PERCENTAGE && !process.env.COPY_STRATEGY;
-
-    if (hasLegacyConfig) {
-        console.warn(
-            '⚠️  Using legacy COPY_PERCENTAGE configuration. Consider migrating to COPY_STRATEGY.'
-        );
-        const copyPercentage = parseFloat(process.env.COPY_PERCENTAGE || '10.0');
-        const tradeMultiplier = parseFloat(process.env.TRADE_MULTIPLIER || '1.0');
-        const effectivePercentage = copyPercentage * tradeMultiplier;
-
-        const config: CopyStrategyConfig = {
-            strategy: CopyStrategy.PERCENTAGE,
-            copySize: effectivePercentage,
-            maxOrderSizeUSD: parseFloat(process.env.MAX_ORDER_SIZE_USD || '100.0'),
-            minOrderSizeUSD: parseFloat(process.env.MIN_ORDER_SIZE_USD || '1.0'),
-            maxPositionSizeUSD: process.env.MAX_POSITION_SIZE_USD
-                ? parseFloat(process.env.MAX_POSITION_SIZE_USD)
-                : undefined,
-            maxDailyVolumeUSD: process.env.MAX_DAILY_VOLUME_USD
-                ? parseFloat(process.env.MAX_DAILY_VOLUME_USD)
-                : undefined,
-        };
-
-        // Parse tiered multipliers if configured (even for legacy mode)
-        if (process.env.TIERED_MULTIPLIERS) {
-            try {
-                config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
-                console.log(`✓ Loaded ${config.tieredMultipliers.length} tiered multipliers`);
-            } catch (error) {
-                throw new Error(`Failed to parse TIERED_MULTIPLIERS: ${error instanceof Error ? error.message : String(error)}`);
-            }
-        } else if (tradeMultiplier !== 1.0) {
-            // If using legacy single multiplier, store it
-            config.tradeMultiplier = tradeMultiplier;
-        }
-
-        return config;
-    }
-
-    // Parse new copy strategy configuration
-    const strategyStr = (process.env.COPY_STRATEGY || 'PERCENTAGE').toUpperCase();
-    const strategy =
-        CopyStrategy[strategyStr as keyof typeof CopyStrategy] || CopyStrategy.PERCENTAGE;
-
-    const config: CopyStrategyConfig = {
-        strategy,
-        copySize: parseFloat(process.env.COPY_SIZE || '10.0'),
-        maxOrderSizeUSD: parseFloat(process.env.MAX_ORDER_SIZE_USD || '100.0'),
-        minOrderSizeUSD: parseFloat(process.env.MIN_ORDER_SIZE_USD || '1.0'),
-        maxPositionSizeUSD: process.env.MAX_POSITION_SIZE_USD
-            ? parseFloat(process.env.MAX_POSITION_SIZE_USD)
-            : undefined,
-        maxDailyVolumeUSD: process.env.MAX_DAILY_VOLUME_USD
-            ? parseFloat(process.env.MAX_DAILY_VOLUME_USD)
-            : undefined,
-    };
-
-    // Add adaptive strategy parameters if applicable
-    if (strategy === CopyStrategy.ADAPTIVE) {
-        config.adaptiveMinPercent = parseFloat(
-            process.env.ADAPTIVE_MIN_PERCENT || config.copySize.toString()
-        );
-        config.adaptiveMaxPercent = parseFloat(
-            process.env.ADAPTIVE_MAX_PERCENT || config.copySize.toString()
-        );
-        config.adaptiveThreshold = parseFloat(process.env.ADAPTIVE_THRESHOLD_USD || '500.0');
-    }
-
-    // Parse tiered multipliers if configured
-    if (process.env.TIERED_MULTIPLIERS) {
-        try {
-            config.tieredMultipliers = parseTieredMultipliers(process.env.TIERED_MULTIPLIERS);
-            console.log(`✓ Loaded ${config.tieredMultipliers.length} tiered multipliers`);
-        } catch (error) {
-            throw new Error(`Failed to parse TIERED_MULTIPLIERS: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    } else if (process.env.TRADE_MULTIPLIER) {
-        // Fall back to single multiplier if no tiers configured
-        const singleMultiplier = parseFloat(process.env.TRADE_MULTIPLIER);
-        if (singleMultiplier !== 1.0) {
-            config.tradeMultiplier = singleMultiplier;
-            console.log(`✓ Using single trade multiplier: ${singleMultiplier}x`);
-        }
-    }
-
-    return config;
-};
-
 export const ENV = {
-    USER_ADDRESSES: parseUserAddresses(process.env.USER_ADDRESSES as string),
+    // === Core Wallet/Network Settings ===
     PROXY_WALLET: process.env.PROXY_WALLET as string,
     PRIVATE_KEY: process.env.PRIVATE_KEY as string,
     CLOB_HTTP_URL: process.env.CLOB_HTTP_URL as string,
     CLOB_WS_URL: process.env.CLOB_WS_URL as string,
-    FETCH_INTERVAL: parseInt(process.env.FETCH_INTERVAL || '1', 10),
-    TOO_OLD_TIMESTAMP: parseInt(process.env.TOO_OLD_TIMESTAMP || '24', 10),
-    RETRY_LIMIT: parseInt(process.env.RETRY_LIMIT || '3', 10),
-    // Legacy parameters (kept for backward compatibility)
-    TRADE_MULTIPLIER: parseFloat(process.env.TRADE_MULTIPLIER || '1.0'),
-    COPY_PERCENTAGE: parseFloat(process.env.COPY_PERCENTAGE || '10.0'),
-    // Per-trader multipliers (optional - overrides TRADE_MULTIPLIER for specific traders)
-    TRADER_MULTIPLIERS: parseTraderMultipliers(
-        process.env.TRADER_MULTIPLIERS,
-        parseUserAddresses(process.env.USER_ADDRESSES as string)
-    ),
-    // New copy strategy configuration
-    COPY_STRATEGY_CONFIG: parseCopyStrategy(),
-    // Network settings
-    REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),
-    NETWORK_RETRY_LIMIT: parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10),
-    // Rate limiting settings
-    EXECUTOR_POLL_INTERVAL_MS: parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '2000', 10),
-    MONITOR_POLL_JITTER_MS: parseInt(process.env.MONITOR_POLL_JITTER_MS || '500', 10),
-    RETRY_DELAY_BASE_MS: parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10),
-    RETRY_DELAY_MAX_MS: parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10),
-    RATE_LIMIT_COOLDOWN_MS: parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10),
-    // Trade aggregation settings
-    TRADE_AGGREGATION_ENABLED: process.env.TRADE_AGGREGATION_ENABLED === 'true',
-    TRADE_AGGREGATION_WINDOW_SECONDS: parseInt(
-        process.env.TRADE_AGGREGATION_WINDOW_SECONDS || '300',
-        10
-    ), // 5 minutes default
     MONGO_URI: process.env.MONGO_URI as string,
     RPC_URL: process.env.RPC_URL as string,
     USDC_CONTRACT_ADDRESS: process.env.USDC_CONTRACT_ADDRESS as string,
-    // Wind down mode settings (for wallet migration)
-    WIND_DOWN_MODE: process.env.WIND_DOWN_MODE === 'true',
-    TARGET_WALLET: process.env.TARGET_WALLET && isValidEthereumAddress(process.env.TARGET_WALLET)
-        ? process.env.TARGET_WALLET
-        : undefined,
-    // Slippage tolerance settings
-    MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY: parseFloat(
-        process.env.MAX_SLIPPAGE_PERCENT_LOW_VOLATILITY || '5'
-    ),
-    MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY: parseFloat(
-        process.env.MAX_SLIPPAGE_PERCENT_HIGH_VOLATILITY || '15'
-    ),
-    SLIPPAGE_RETRY_ENABLED: process.env.SLIPPAGE_RETRY_ENABLED !== 'false', // Enabled by default
-    SLIPPAGE_RETRY_RELAXATION_PERCENT: parseFloat(
-        process.env.SLIPPAGE_RETRY_RELAXATION_PERCENT || '30'
-    ),
-    // Trade filter settings
-    FILTER_PRICE_BAND_ENABLED: process.env.FILTER_PRICE_BAND_ENABLED !== 'false', // Enabled by default
-    FILTER_PRICE_MIN: parseFloat(process.env.FILTER_PRICE_MIN || '0.20'),
-    FILTER_PRICE_MAX: parseFloat(process.env.FILTER_PRICE_MAX || '0.80'),
-    FILTER_MARKET_DEDUP_ENABLED: process.env.FILTER_MARKET_DEDUP_ENABLED !== 'false', // Enabled by default
-    FILTER_THEME_CAP_ENABLED: process.env.FILTER_THEME_CAP_ENABLED !== 'false', // Enabled by default
-    FILTER_THEME_CAP_PERCENT: parseInt(process.env.FILTER_THEME_CAP_PERCENT || '30', 10),
 
-    // Stop-Loss / Take-Profit settings
+    // === Weather Trading Settings ===
+    // Edge threshold - minimum edge required to trade
+    WEATHER_EDGE_THRESHOLD: parseFloat(process.env.WEATHER_EDGE_THRESHOLD || '0.03'),
+    // Maximum lead days to trade (only trade markets resolving within N days)
+    WEATHER_MAX_LEAD_DAYS: parseInt(process.env.WEATHER_MAX_LEAD_DAYS || '7', 10),
+    // Observation polling interval on day-of (ms)
+    WEATHER_OBSERVATION_POLL_MS: parseInt(process.env.WEATHER_OBSERVATION_POLL_MS || '300000', 10), // 5 min
+    // Market discovery interval (ms)
+    WEATHER_DISCOVERY_INTERVAL_MS: parseInt(process.env.WEATHER_DISCOVERY_INTERVAL_MS || '3600000', 10), // 1 hour
+    // Forecast refresh interval (ms)
+    WEATHER_FORECAST_REFRESH_MS: parseInt(process.env.WEATHER_FORECAST_REFRESH_MS || '1800000', 10), // 30 min
+    // Dry run mode - compute probabilities but don't execute trades
+    WEATHER_DRY_RUN: process.env.WEATHER_DRY_RUN === 'true',
+    // Minimum parser confidence to trade a market (0-1)
+    WEATHER_MIN_PARSER_CONFIDENCE: parseFloat(process.env.WEATHER_MIN_PARSER_CONFIDENCE || '0.8'),
+
+    // === Risk Management Settings ===
+    // Maximum exposure per market (USD)
+    MAX_EXPOSURE_PER_MARKET_USD: parseFloat(process.env.MAX_EXPOSURE_PER_MARKET_USD || '50'),
+    // Maximum exposure per region/city (USD)
+    MAX_EXPOSURE_PER_REGION_USD: parseFloat(process.env.MAX_EXPOSURE_PER_REGION_USD || '200'),
+    // Maximum exposure for markets resolving on same date (USD)
+    MAX_EXPOSURE_PER_DATE_USD: parseFloat(process.env.MAX_EXPOSURE_PER_DATE_USD || '300'),
+    // Maximum daily loss before bot pauses (USD)
+    MAX_DAILY_LOSS_USD: parseFloat(process.env.MAX_DAILY_LOSS_USD || '100'),
+    // Maximum data age before kill-switch (ms)
+    MAX_DATA_AGE_MS: parseInt(process.env.MAX_DATA_AGE_MS || '3600000', 10), // 1 hour
+
+    // === Order Sizing Settings ===
+    // Minimum order size (USD)
+    MIN_ORDER_SIZE_USD: parseFloat(process.env.MIN_ORDER_SIZE_USD || '1.0'),
+    // Maximum order size (USD)
+    MAX_ORDER_SIZE_USD: parseFloat(process.env.MAX_ORDER_SIZE_USD || '25'),
+
+    // === Network/Rate Limit Settings ===
+    REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS || '10000', 10),
+    NETWORK_RETRY_LIMIT: parseInt(process.env.NETWORK_RETRY_LIMIT || '3', 10),
+    RETRY_DELAY_BASE_MS: parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10),
+    RETRY_DELAY_MAX_MS: parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10),
+    RATE_LIMIT_COOLDOWN_MS: parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10),
+    EXECUTOR_POLL_INTERVAL_MS: parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '5000', 10),
+    MONITOR_POLL_JITTER_MS: parseInt(process.env.MONITOR_POLL_JITTER_MS || '500', 10),
+
+    // === Slippage Settings ===
+    MAX_SLIPPAGE_PERCENT: parseFloat(process.env.MAX_SLIPPAGE_PERCENT || '5'),
+
+    // === Position Management Settings ===
     STOP_LOSS_ENABLED: process.env.STOP_LOSS_ENABLED === 'true',
     STOP_LOSS_PERCENT: parseFloat(process.env.STOP_LOSS_PERCENT || '20'),
     TAKE_PROFIT_ENABLED: process.env.TAKE_PROFIT_ENABLED === 'true',
     TAKE_PROFIT_PERCENT: parseFloat(process.env.TAKE_PROFIT_PERCENT || '50'),
     TRAILING_STOP_ENABLED: process.env.TRAILING_STOP_ENABLED === 'true',
     TRAILING_STOP_PERCENT: parseFloat(process.env.TRAILING_STOP_PERCENT || '15'),
-    POSITION_CHECK_INTERVAL_MS: parseInt(process.env.POSITION_CHECK_INTERVAL_MS || '60000', 10), // 1 minute
-    SL_TP_MIN_PRICE_PERCENT: parseFloat(process.env.SL_TP_MIN_PRICE_PERCENT || '50'), // Min % of expected price for SL sells
+    POSITION_CHECK_INTERVAL_MS: parseInt(process.env.POSITION_CHECK_INTERVAL_MS || '60000', 10),
+    SL_TP_MIN_PRICE_PERCENT: parseFloat(process.env.SL_TP_MIN_PRICE_PERCENT || '50'),
 
-    // Trader scoring / dynamic multiplier settings
-    TRADER_SCORING_ENABLED: process.env.TRADER_SCORING_ENABLED === 'true',
-    HOT_STREAK_THRESHOLD: parseInt(process.env.HOT_STREAK_THRESHOLD || '5', 10), // Consecutive wins
-    COLD_STREAK_THRESHOLD: parseInt(process.env.COLD_STREAK_THRESHOLD || '3', 10), // Consecutive losses
-    MAX_DYNAMIC_MULTIPLIER: parseFloat(process.env.MAX_DYNAMIC_MULTIPLIER || '1.5'),
-    MIN_DYNAMIC_MULTIPLIER: parseFloat(process.env.MIN_DYNAMIC_MULTIPLIER || '0.5'),
-    TRADER_SCORE_LOOKBACK_DAYS: parseInt(process.env.TRADER_SCORE_LOOKBACK_DAYS || '7', 10),
+    // === Discord Notifications ===
+    DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL || '',
+    DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || '',
+    DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || '',
 };

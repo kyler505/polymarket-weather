@@ -70,6 +70,11 @@ class Logger {
         this.writeToFile(`ERROR: ${message}`);
     }
 
+    static debug(message: string) {
+        // Only write to file, don't spam console
+        this.writeToFile(`DEBUG: ${message}`);
+    }
+
     static trade(traderAddress: string, action: string, details: any) {
         console.log('\n' + chalk.magenta('─'.repeat(70)));
         console.log(chalk.magenta.bold('📊 NEW TRADE DETECTED'));

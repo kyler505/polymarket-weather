@@ -1,20 +1,23 @@
+/**
+ * Weather Prediction Trading Bot Entry Point
+ * Discovers weather markets, computes fair probabilities, and executes trades
+ */
+
 import connectDB, { closeDB } from './config/db';
 import { ENV } from './config/env';
 import createClobClient from './utils/createClobClient';
-import tradeExecutor, { stopTradeExecutor } from './services/tradeExecutor';
-import tradeMonitor, { stopTradeMonitor } from './services/tradeMonitor';
 import Logger from './utils/logger';
 import { performHealthCheck, logHealthCheck } from './utils/healthCheck';
 
+import { startWeatherMonitor, stopWeatherMonitor, getMonitorStatus } from './services/weatherMonitor';
+import { startWeatherExecutor, stopWeatherExecutor } from './services/weatherExecutor';
 import { startRedemptionService, stopRedemptionService } from './services/redemptionService';
 import { startPositionManager, stopPositionManager } from './services/positionManager';
-import { updateAllTraderScores } from './services/traderAnalytics';
 import { logNotificationConfig, notifyStartup, isNotificationsEnabled } from './services/discordNotifier';
 import { startDiscordBot, stopDiscordBot } from './services/discordBot';
 import fetchData from './utils/fetchData';
 import getMyBalance from './utils/getMyBalance';
 
-const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const PROXY_WALLET = ENV.PROXY_WALLET;
 
 // Graceful shutdown handler
@@ -31,9 +34,9 @@ const gracefulShutdown = async (signal: string) => {
     Logger.info(`Received ${signal}, initiating graceful shutdown...`);
 
     try {
-        // Stop services
-        stopTradeMonitor();
-        stopTradeExecutor();
+        // Stop weather services
+        stopWeatherMonitor();
+        stopWeatherExecutor();
         stopRedemptionService();
         stopPositionManager();
         await stopDiscordBot();
@@ -56,13 +59,11 @@ const gracefulShutdown = async (signal: string) => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
     Logger.error(`Unhandled Rejection at: ${promise}, reason: ${reason}`);
-    // Don't exit immediately, let the application try to recover
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error: Error) => {
     Logger.error(`Uncaught Exception: ${error.message}`);
-    // Exit immediately for uncaught exceptions as the application is in an undefined state
     gracefulShutdown('uncaughtException').catch(() => {
         process.exit(1);
     });
@@ -72,21 +73,29 @@ process.on('uncaughtException', (error: Error) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+/**
+ * Display weather bot startup banner
+ */
+function displayBanner() {
+    console.log('\n');
+    console.log('\x1b[36m  ╦ ╦┌─┐┌─┐┌┬┐┬ ┬┌─┐┬─┐  ╔╗ ┌─┐┌┬┐\x1b[0m');
+    console.log('\x1b[36m  ║║║├┤ ├─┤ │ ├─┤├┤ ├┬┘  ╠╩╗│ │ │ \x1b[0m');
+    console.log('\x1b[36m  ╚╩╝└─┘┴ ┴ ┴ ┴ ┴└─┘┴└─  ╚═╝└─┘ ┴ \x1b[0m');
+    console.log('\x1b[33m  Polymarket Weather Prediction Trading\x1b[0m');
+    console.log('\x1b[90m  ────────────────────────────────────\x1b[0m\n');
+}
+
 export const main = async () => {
     try {
-        // Welcome message for first-time users
-        const colors = {
-            reset: '\x1b[0m',
-            yellow: '\x1b[33m',
-            cyan: '\x1b[36m',
-        };
+        displayBanner();
 
-        console.log(`\n${colors.yellow}💡 First time running the bot?${colors.reset}`);
-        console.log(`   Read the guide: ${colors.cyan}GETTING_STARTED.md${colors.reset}`);
-        console.log(`   Run health check: ${colors.cyan}npm run health-check${colors.reset}\n`);
+        // Quick start tips
+        console.log('\x1b[33m💡 Quick Tips:\x1b[0m');
+        console.log('   Set \x1b[36mWEATHER_DRY_RUN=true\x1b[0m to test without trading');
+        console.log('   Run \x1b[36mnpm run discover\x1b[0m to preview weather markets\n');
 
         await connectDB();
-        Logger.startup(USER_ADDRESSES, PROXY_WALLET);
+        Logger.info(`Wallet: ${PROXY_WALLET.slice(0, 8)}...${PROXY_WALLET.slice(-6)}`);
 
         // Log notification configuration
         logNotificationConfig();
@@ -105,23 +114,31 @@ export const main = async () => {
         Logger.success('CLOB client ready');
 
         Logger.separator();
-        Logger.info('Starting trade monitor...');
-        tradeMonitor();
 
-        Logger.info('Starting trade executor...');
-        tradeExecutor(clobClient);
+        // Log key configuration
+        Logger.info('Weather Bot Configuration:');
+        Logger.info(`  Edge threshold: ${(ENV.WEATHER_EDGE_THRESHOLD * 100).toFixed(1)}%`);
+        Logger.info(`  Max lead days: ${ENV.WEATHER_MAX_LEAD_DAYS}`);
+        Logger.info(`  Max per-market exposure: $${ENV.MAX_EXPOSURE_PER_MARKET_USD}`);
+        Logger.info(`  Dry run mode: ${ENV.WEATHER_DRY_RUN ? 'YES' : 'NO'}`);
+        Logger.separator();
 
-        startRedemptionService();
+        // Start weather monitor (discovers markets, computes probabilities)
+        Logger.info('Starting Weather Monitor...');
+        startWeatherMonitor();
+
+        // Start weather executor (places trades)
+        Logger.info('Starting Weather Executor...');
+        startWeatherExecutor(clobClient);
+
+        // Start position manager (handles SL/TP)
         startPositionManager();
+
+        // Start redemption service (redeems resolved markets)
+        startRedemptionService();
 
         // Start Discord bot (if enabled)
         await startDiscordBot();
-
-        // Initial trader scoring update (if enabled)
-        if (ENV.TRADER_SCORING_ENABLED) {
-            Logger.info('Updating initial trader scores...');
-            updateAllTraderScores().catch(err => Logger.warning(`Initial trader scoring failed: ${err}`));
-        }
 
         // Send Discord startup notification
         if (isNotificationsEnabled()) {
@@ -130,17 +147,25 @@ export const main = async () => {
                 const positions = await fetchData(`https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`);
                 const positionCount = Array.isArray(positions) ? positions.length : 0;
 
-                await notifyStartup({
-                    traders: USER_ADDRESSES.length,
-                    balance,
-                    positions: positionCount,
-                });
+                // Get tracked markets count after a short delay for discovery
+                setTimeout(async () => {
+                    const status = getMonitorStatus();
+                    await notifyStartup({
+                        markets: status.trackedMarkets,
+                        balance,
+                        positions: positionCount,
+                    });
+                }, 5000);
             } catch (err) {
                 Logger.warning(`Failed to send startup notification: ${err}`);
             }
         }
 
-        // test(clobClient);
+        Logger.success('Weather Trading Bot is running!');
+        if (ENV.WEATHER_DRY_RUN) {
+            Logger.warning('⚠️  DRY RUN MODE - No real trades will be placed');
+        }
+
     } catch (error) {
         Logger.error(`Fatal error during startup: ${error}`);
         await gracefulShutdown('startup-error');

@@ -1,8 +1,15 @@
+/**
+ * Discord Bot for Weather Trading Bot
+ * Provides slash commands for monitoring and control
+ */
+
 import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction } from 'discord.js';
 import { ENV } from '../config/env';
 import fetchData from '../utils/fetchData';
 import getMyBalance from '../utils/getMyBalance';
 import Logger from '../utils/logger';
+import { getMonitorStatus } from './weatherMonitor';
+import { getExposureSummary, isHealthy, pauseTrading, resumeTrading } from './weatherRiskManager';
 
 // ============================================================================
 // CONFIGURATION
@@ -10,14 +17,13 @@ import Logger from '../utils/logger';
 
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
-const GUILD_ID = process.env.DISCORD_GUILD_ID || ''; // Optional: for faster command registration
+const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 
 const BOT_ENABLED = process.env.DISCORD_BOT_ENABLED === 'true';
 const POSITIONS_PER_PAGE = 5;
 
 // Bot state
 let client: Client | null = null;
-let isPaused = false;
 
 // ============================================================================
 // SLASH COMMANDS DEFINITION
@@ -33,8 +39,8 @@ const commands = [
         .setDescription('List all open positions with details'),
 
     new SlashCommandBuilder()
-        .setName('traders')
-        .setDescription('Show trader performance scores'),
+        .setName('markets')
+        .setDescription('Show tracked weather markets'),
 
     new SlashCommandBuilder()
         .setName('config')
@@ -42,15 +48,19 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('pause')
-        .setDescription('Pause copy trading (stops new trades)'),
+        .setDescription('Pause weather trading'),
 
     new SlashCommandBuilder()
         .setName('resume')
-        .setDescription('Resume copy trading'),
+        .setDescription('Resume weather trading'),
 
     new SlashCommandBuilder()
         .setName('status')
         .setDescription('Check if bot is running and healthy'),
+
+    new SlashCommandBuilder()
+        .setName('exposure')
+        .setDescription('Show current exposure and risk limits'),
 ];
 
 // ============================================================================
@@ -67,25 +77,29 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
 
         // Calculate totals
         let totalValue = 0;
-        let totalPnl = 0;
         let unrealizedPnl = 0;
 
         positionList.forEach((pos: any) => {
             totalValue += pos.currentValue || 0;
-            totalPnl += pos.cashPnl || 0;
             unrealizedPnl += (pos.currentValue || 0) - (pos.initialValue || 0);
         });
 
+        const monitorStatus = getMonitorStatus();
+        const exposure = getExposureSummary();
+
         const embed = new EmbedBuilder()
-            .setTitle('📊 Bot Statistics')
-            .setColor(totalPnl >= 0 ? 0x00ff00 : 0xff0000)
+            .setTitle('🌤️ Weather Bot Statistics')
+            .setColor(unrealizedPnl >= 0 ? 0x00ff00 : 0xff0000)
             .addFields(
                 { name: '💵 USDC Balance', value: `$${balance.toFixed(2)}`, inline: true },
                 { name: '📈 Positions Value', value: `$${totalValue.toFixed(2)}`, inline: true },
                 { name: '🎯 Total Portfolio', value: `$${(balance + totalValue).toFixed(2)}`, inline: true },
                 { name: '📊 Open Positions', value: `${positionList.length}`, inline: true },
                 { name: '💰 Unrealized P&L', value: `$${unrealizedPnl.toFixed(2)}`, inline: true },
-                { name: '⏸️ Status', value: isPaused ? '🔴 Paused' : '🟢 Active', inline: true },
+                { name: '🌡️ Tracked Markets', value: `${monitorStatus.trackedMarkets}`, inline: true },
+                { name: '📋 Pending Signals', value: `${monitorStatus.pendingSignals}`, inline: true },
+                { name: '💼 Total Exposure', value: `$${exposure.totalExposure.toFixed(2)}`, inline: true },
+                { name: '⏸️ Status', value: exposure.isPaused ? '🔴 Paused' : '🟢 Active', inline: true },
             )
             .setTimestamp()
             .setFooter({ text: `Wallet: ${ENV.PROXY_WALLET.slice(0, 10)}...` });
@@ -96,9 +110,6 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
     }
 };
 
-/**
- * Build positions embed for a specific page
- */
 const buildPositionsEmbed = (positionList: any[], page: number, totalPages: number): EmbedBuilder => {
     const start = page * POSITIONS_PER_PAGE;
     const end = Math.min(start + POSITIONS_PER_PAGE, positionList.length);
@@ -124,13 +135,9 @@ const buildPositionsEmbed = (positionList: any[], page: number, totalPages: numb
     }
 
     embed.setFooter({ text: `Page ${page + 1} of ${totalPages} • ${positionList.length} total positions` });
-
     return embed;
 };
 
-/**
- * Build pagination buttons
- */
 const buildPaginationButtons = (currentPage: number, totalPages: number): ActionRowBuilder<ButtonBuilder> => {
     const row = new ActionRowBuilder<ButtonBuilder>();
 
@@ -177,7 +184,6 @@ const handlePositions = async (interaction: ChatInputCommandInteraction): Promis
             return;
         }
 
-        // Sort by value descending
         positionList.sort((a: any, b: any) => (b.currentValue || 0) - (a.currentValue || 0));
 
         const totalPages = Math.ceil(positionList.length / POSITIONS_PER_PAGE);
@@ -193,14 +199,12 @@ const handlePositions = async (interaction: ChatInputCommandInteraction): Promis
 
         if (totalPages <= 1) return;
 
-        // Create button collector
         const collector = message.createMessageComponentCollector({
             componentType: ComponentType.Button,
-            time: 120000, // 2 minutes
+            time: 120000,
         });
 
         collector.on('collect', async (buttonInteraction: ButtonInteraction) => {
-            // Only respond to the original user
             if (buttonInteraction.user.id !== interaction.user.id) {
                 await buttonInteraction.reply({ content: '❌ Only the command user can navigate', ephemeral: true });
                 return;
@@ -231,7 +235,6 @@ const handlePositions = async (interaction: ChatInputCommandInteraction): Promis
         });
 
         collector.on('end', async () => {
-            // Disable buttons after timeout
             try {
                 const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
                     new ButtonBuilder().setCustomId('expired').setLabel('Session Expired').setStyle(ButtonStyle.Secondary).setDisabled(true)
@@ -241,75 +244,106 @@ const handlePositions = async (interaction: ChatInputCommandInteraction): Promis
                 // Message may have been deleted
             }
         });
-
     } catch (error) {
         await interaction.editReply(`❌ Error fetching positions: ${error}`);
     }
 };
 
-const handleTraders = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+const handleMarkets = async (interaction: ChatInputCommandInteraction): Promise<void> => {
     await interaction.deferReply();
 
     try {
+        const monitorStatus = getMonitorStatus();
+
         const embed = new EmbedBuilder()
-            .setTitle('👥 Tracked Traders')
-            .setColor(0x9b59b6)
+            .setTitle('🌡️ Weather Markets')
+            .setColor(0x3498db)
+            .addFields(
+                { name: 'Tracked Markets', value: `${monitorStatus.trackedMarkets}`, inline: true },
+                { name: 'Pending Signals', value: `${monitorStatus.pendingSignals}`, inline: true },
+                { name: 'Last Discovery', value: monitorStatus.lastDiscovery.toLocaleString(), inline: true },
+                { name: 'Monitor Running', value: monitorStatus.isRunning ? '✅' : '❌', inline: true },
+            )
             .setTimestamp();
-
-        for (let i = 0; i < ENV.USER_ADDRESSES.length; i++) {
-            const addr = ENV.USER_ADDRESSES[i];
-            const multiplier = ENV.TRADER_MULTIPLIERS?.get(addr.toLowerCase()) || ENV.TRADE_MULTIPLIER;
-
-            // Fetch trader's positions for value estimate
-            const positions = await fetchData(`https://data-api.polymarket.com/positions?user=${addr}`);
-            const positionList = Array.isArray(positions) ? positions : [];
-            const totalValue = positionList.reduce((sum: number, p: any) => sum + (p.currentValue || 0), 0);
-
-            embed.addFields({
-                name: `${i + 1}. \`${addr.slice(0, 10)}...${addr.slice(-4)}\``,
-                value: `Multiplier: **${multiplier}x** | Positions: ${positionList.length} | Value: $${totalValue.toFixed(0)}`,
-                inline: false,
-            });
-        }
 
         await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-        await interaction.editReply(`❌ Error fetching traders: ${error}`);
+        await interaction.editReply(`❌ Error fetching markets: ${error}`);
     }
 };
 
 const handleConfig = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+    const exposure = getExposureSummary();
+
     const embed = new EmbedBuilder()
-        .setTitle('⚙️ Bot Configuration')
+        .setTitle('⚙️ Weather Bot Configuration')
         .setColor(0x3498db)
         .addFields(
-            { name: '📋 Strategy', value: `${ENV.COPY_STRATEGY_CONFIG.strategy}`, inline: true },
-            { name: '💰 Copy Size', value: `${ENV.COPY_STRATEGY_CONFIG.copySize}`, inline: true },
-            { name: '🎚️ Multiplier', value: `${ENV.TRADE_MULTIPLIER}x`, inline: true },
+            { name: '📊 Edge Threshold', value: `${(ENV.WEATHER_EDGE_THRESHOLD * 100).toFixed(1)}%`, inline: true },
+            { name: '📅 Max Lead Days', value: `${ENV.WEATHER_MAX_LEAD_DAYS}`, inline: true },
+            { name: '🧪 Dry Run', value: ENV.WEATHER_DRY_RUN ? 'YES' : 'NO', inline: true },
+            { name: '💰 Max Per Market', value: `$${ENV.MAX_EXPOSURE_PER_MARKET_USD}`, inline: true },
+            { name: '🌍 Max Per Region', value: `$${ENV.MAX_EXPOSURE_PER_REGION_USD}`, inline: true },
+            { name: '📅 Max Per Date', value: `$${ENV.MAX_EXPOSURE_PER_DATE_USD}`, inline: true },
             { name: '🛑 Stop-Loss', value: ENV.STOP_LOSS_ENABLED ? `${ENV.STOP_LOSS_PERCENT}%` : 'OFF', inline: true },
             { name: '💰 Take-Profit', value: ENV.TAKE_PROFIT_ENABLED ? `${ENV.TAKE_PROFIT_PERCENT}%` : 'OFF', inline: true },
-            { name: '📉 Trailing Stop', value: ENV.TRAILING_STOP_ENABLED ? `${ENV.TRAILING_STOP_PERCENT}%` : 'OFF', inline: true },
-            { name: '📊 Trader Scoring', value: ENV.TRADER_SCORING_ENABLED ? 'ON' : 'OFF', inline: true },
-            { name: '👥 Traders', value: `${ENV.USER_ADDRESSES.length}`, inline: true },
-            { name: '⏸️ Status', value: isPaused ? 'Paused' : 'Active', inline: true },
+            { name: '⏸️ Status', value: exposure.isPaused ? 'Paused' : 'Active', inline: true },
         )
         .setTimestamp();
 
     await interaction.reply({ embeds: [embed] });
 };
 
+const handleExposure = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+    const exposure = getExposureSummary();
+
+    const embed = new EmbedBuilder()
+        .setTitle('💼 Current Exposure')
+        .setColor(exposure.isPaused ? 0xff0000 : 0x00ff00)
+        .addFields(
+            { name: 'Total Exposure', value: `$${exposure.totalExposure.toFixed(2)}`, inline: true },
+            { name: 'Daily P&L', value: `$${exposure.dailyPnL.toFixed(2)}`, inline: true },
+            { name: 'Status', value: exposure.isPaused ? `⏸️ Paused: ${exposure.pauseReason}` : '🟢 Active', inline: true },
+        )
+        .setTimestamp();
+
+    // Add region breakdown
+    const regions = Object.entries(exposure.byRegion);
+    if (regions.length > 0) {
+        embed.addFields({
+            name: '🌍 By Region',
+            value: regions.map(([r, v]) => `${r}: $${v.toFixed(0)}`).join('\n') || 'None',
+            inline: false,
+        });
+    }
+
+    // Add date breakdown
+    const dates = Object.entries(exposure.byDate);
+    if (dates.length > 0) {
+        embed.addFields({
+            name: '📅 By Date',
+            value: dates.map(([d, v]) => `${d}: $${v.toFixed(0)}`).join('\n') || 'None',
+            inline: false,
+        });
+    }
+
+    await interaction.reply({ embeds: [embed] });
+};
+
 const handlePause = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-    if (isPaused) {
+    const exposure = getExposureSummary();
+
+    if (exposure.isPaused) {
         await interaction.reply('⚠️ Bot is already paused');
         return;
     }
 
-    isPaused = true;
+    pauseTrading('Paused via Discord command');
     Logger.warning('⏸️ Bot paused via Discord command');
 
     const embed = new EmbedBuilder()
-        .setTitle('⏸️ Bot Paused')
-        .setDescription('Copy trading has been paused. No new trades will be executed.\nUse `/resume` to continue.')
+        .setTitle('⏸️ Trading Paused')
+        .setDescription('Weather trading has been paused. No new trades will be executed.\nUse `/resume` to continue.')
         .setColor(0xffaa00)
         .setTimestamp();
 
@@ -317,17 +351,19 @@ const handlePause = async (interaction: ChatInputCommandInteraction): Promise<vo
 };
 
 const handleResume = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-    if (!isPaused) {
+    const exposure = getExposureSummary();
+
+    if (!exposure.isPaused) {
         await interaction.reply('⚠️ Bot is already running');
         return;
     }
 
-    isPaused = false;
+    resumeTrading();
     Logger.success('▶️ Bot resumed via Discord command');
 
     const embed = new EmbedBuilder()
-        .setTitle('▶️ Bot Resumed')
-        .setDescription('Copy trading has been resumed. Trades will be executed normally.')
+        .setTitle('▶️ Trading Resumed')
+        .setDescription('Weather trading has been resumed. Trades will be executed normally.')
         .setColor(0x00ff00)
         .setTimestamp();
 
@@ -339,15 +375,30 @@ const handleStatus = async (interaction: ChatInputCommandInteraction): Promise<v
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
 
+    const health = isHealthy();
+    const monitorStatus = getMonitorStatus();
+    const exposure = getExposureSummary();
+
     const embed = new EmbedBuilder()
-        .setTitle('🤖 Bot Status')
-        .setColor(isPaused ? 0xffaa00 : 0x00ff00)
+        .setTitle('🤖 Weather Bot Status')
+        .setColor(health.healthy ? 0x00ff00 : 0xff0000)
         .addFields(
-            { name: 'Status', value: isPaused ? '⏸️ Paused' : '🟢 Running', inline: true },
+            { name: 'Health', value: health.healthy ? '✅ Healthy' : '⚠️ Issues', inline: true },
+            { name: 'Trading', value: exposure.isPaused ? '⏸️ Paused' : '🟢 Active', inline: true },
+            { name: 'Monitor', value: monitorStatus.isRunning ? '🟢 Running' : '🔴 Stopped', inline: true },
             { name: 'Uptime', value: `${hours}h ${minutes}m`, inline: true },
-            { name: 'Traders', value: `${ENV.USER_ADDRESSES.length}`, inline: true },
+            { name: 'Markets', value: `${monitorStatus.trackedMarkets}`, inline: true },
+            { name: 'Signals', value: `${monitorStatus.pendingSignals}`, inline: true },
         )
         .setTimestamp();
+
+    if (!health.healthy) {
+        embed.addFields({
+            name: '⚠️ Issues',
+            value: health.issues.join('\n'),
+            inline: false,
+        });
+    }
 
     await interaction.reply({ embeds: [embed] });
 };
@@ -356,9 +407,6 @@ const handleStatus = async (interaction: ChatInputCommandInteraction): Promise<v
 // BOT LIFECYCLE
 // ============================================================================
 
-/**
- * Register slash commands with Discord
- */
 const registerCommands = async (): Promise<void> => {
     if (!BOT_TOKEN || !CLIENT_ID) {
         Logger.warning('Discord bot: Missing BOT_TOKEN or CLIENT_ID');
@@ -371,12 +419,10 @@ const registerCommands = async (): Promise<void> => {
         Logger.info('🔄 Registering Discord slash commands...');
 
         if (GUILD_ID) {
-            // Guild commands (instant, for development)
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
                 body: commands.map(cmd => cmd.toJSON()),
             });
         } else {
-            // Global commands (takes up to 1 hour to propagate)
             await rest.put(Routes.applicationCommands(CLIENT_ID), {
                 body: commands.map(cmd => cmd.toJSON()),
             });
@@ -388,9 +434,6 @@ const registerCommands = async (): Promise<void> => {
     }
 };
 
-/**
- * Start the Discord bot
- */
 export const startDiscordBot = async (): Promise<void> => {
     if (!BOT_ENABLED) {
         Logger.info('🤖 Discord Bot: DISABLED');
@@ -423,11 +466,14 @@ export const startDiscordBot = async (): Promise<void> => {
                 case 'positions':
                     await handlePositions(interaction);
                     break;
-                case 'traders':
-                    await handleTraders(interaction);
+                case 'markets':
+                    await handleMarkets(interaction);
                     break;
                 case 'config':
                     await handleConfig(interaction);
+                    break;
+                case 'exposure':
+                    await handleExposure(interaction);
                     break;
                 case 'pause':
                     await handlePause(interaction);
@@ -451,14 +497,10 @@ export const startDiscordBot = async (): Promise<void> => {
         }
     });
 
-    // Register commands and login
     await registerCommands();
     await client.login(BOT_TOKEN);
 };
 
-/**
- * Stop the Discord bot
- */
 export const stopDiscordBot = async (): Promise<void> => {
     if (client) {
         client.destroy();
@@ -467,16 +509,7 @@ export const stopDiscordBot = async (): Promise<void> => {
     }
 };
 
-/**
- * Check if bot is paused (for use by trade executor)
- */
 export const isBotPaused = (): boolean => {
-    return isPaused;
-};
-
-/**
- * Set pause state programmatically
- */
-export const setBotPaused = (paused: boolean): void => {
-    isPaused = paused;
+    const exposure = getExposureSummary();
+    return exposure.isPaused;
 };

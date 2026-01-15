@@ -1,138 +1,223 @@
-# Position Tracking System
+# Position Tracking
 
-## Problem
+This document explains how the bot tracks positions and calculates P&L.
 
-When you top up your account after buying a position, when selling that position, the bot may sell the wrong number of tokens because the calculation is based on the current balance, not the actually purchased amount.
+## Position Data Sources
 
-### Problem example:
+### Polymarket API
 
-1. You have balance $100, trader has $500
-2. Trader buys $50 → you buy $10 (proportionally 20%)
-3. **You top up balance to $500**
-4. Trader sells 50% of position
-5. **Old logic**: will sell 50% of current position (incorrect)
-6. **New logic**: will sell 50% of actually purchased tokens (correct)
-
-## Solution
-
-The purchase tracking system remembers the actual number of purchased tokens and uses this information when selling.
-
-### How it works:
-
-#### 1. On purchase (BUY)
-
-- Bot calculates proportional order size from current balance
-- **After successful purchase** saves the actual number of purchased tokens in the `myBoughtSize` field
-- This number is saved in MongoDB database for each transaction
-
-#### 2. On sale (SELL)
-
-- Bot loads all previous purchases for this asset/conditionId
-- Sums all purchased tokens (`myBoughtSize`)
-- Calculates the percentage the trader is selling
-- **Applies this percentage to actually purchased tokens**, not to current position
-- After sale, updates tracked purchases:
-    - If sold ≥99% → clears tracking completely
-    - If sold partially → proportionally decreases `myBoughtSize` for all purchases
-
-## Code changes
-
-### 1. Data model (`userHistory.ts`)
-
-```typescript
-myBoughtSize: { type: Number, required: false } // Tracks actual tokens we bought
-```
-
-### 2. Interface (`User.ts`)
-
-```typescript
-myBoughtSize?: number; // Tracks actual tokens we bought
-```
-
-### 3. Purchase logic (`postOrder.ts`)
-
-- Tracks `totalBoughtTokens` during purchase
-- Saves this value to database: `{ myBoughtSize: totalBoughtTokens }`
-- Logs for debugging: `📝 Tracked purchase: X.XX tokens`
-
-### 4. Sale logic (`postOrder.ts`)
-
-- Loads previous purchases:
-    ```typescript
-    const previousBuys = await UserActivity.find({
-        asset: trade.asset,
-        conditionId: trade.conditionId,
-        side: 'BUY',
-        bot: true,
-        myBoughtSize: { $exists: true, $gt: 0 },
-    });
-    ```
-- Calculates from purchased tokens, not from current position
-- Updates tracking after sale
-
-## Advantages
-
-1. ✅ **Correct proportions**: Sale is always proportional to actually purchased
-2. ✅ **Independence from top-ups**: Can top up balance at any time
-3. ✅ **Accuracy**: Tracking real tokens, not calculation from balance
-4. ✅ **Transparency**: Visible in logs how many tokens are tracked
-5. ✅ **Fallback**: If no tracked purchases, uses old logic
-
-## Debug logs
-
-### On purchase:
+The bot fetches position data from Polymarket's data API:
 
 ```
-✅ Bought $10.00 at $0.52 (19.23 tokens)
-📝 Tracked purchase: 19.23 tokens for future sell calculations
+https://data-api.polymarket.com/positions?user=WALLET_ADDRESS
 ```
 
-### On sale:
+This returns all open positions including:
+- Token ID (the specific outcome token)
+- Condition ID (the market)
+- Size (number of tokens)
+- Average entry price
+- Current value
+- Unrealized P&L
+
+### MongoDB Storage
+
+The bot stores additional tracking data in MongoDB:
+- Entry timestamps
+- Original trade signals
+- Peak prices (for trailing stops)
+
+---
+
+## Position Lifecycle
+
+### 1. Signal Generated
+
+When edge is detected:
+```
+Signal: BUY "40-44°F" @ $0.35 (fair: $0.42, edge: 7%)
+```
+
+### 2. Order Placed
+
+Limit order sent to CLOB:
+```
+Order placed: "40-44°F" @ $0.35 for $10.00
+```
+
+### 3. Position Opened
+
+After fill, position is tracked:
+```
+Position: 28.57 tokens @ $0.35 avg
+```
+
+### 4. Position Monitored
+
+Bot continuously monitors:
+- Current price vs entry
+- P&L percentage
+- SL/TP/Trailing stop triggers
+
+### 5. Position Closed
+
+Either by:
+- Market resolution
+- Stop-loss trigger
+- Take-profit trigger
+- Trailing stop trigger
+- Manual sale
+
+---
+
+## P&L Calculation
+
+### Unrealized P&L
 
 ```
-📊 Found 2 previous purchases: 35.45 tokens bought
-Calculating from tracked purchases: 35.45 × 50.00% = 17.72 tokens
-✅ Sold 17.72 tokens at $0.55
-📝 Updated purchase tracking (sold 50.0% of tracked position)
+Unrealized P&L ($) = current_value - cost_basis
+Unrealized P&L (%) = ((current_price / avg_entry_price) - 1) × 100
 ```
 
-### On full sale:
+**Example**:
+- Bought 28.57 tokens @ $0.35 = $10.00 cost
+- Current price: $0.42
+- Current value: 28.57 × 0.42 = $12.00
+- Unrealized P&L: $2.00 (+20%)
+
+### Realized P&L
+
+When position closes:
+```
+Realized P&L = exit_value - cost_basis
+```
+
+---
+
+## Resolution Outcomes
+
+### Market Resolves YES
+
+If you hold YES tokens for the correct outcome:
+- Tokens redeem for $1.00 each
+- P&L = $1.00 × tokens - cost_basis
+
+### Market Resolves NO
+
+If you hold tokens for incorrect outcome:
+- Tokens worth $0.00
+- Loss = -cost_basis
+
+### Automatic Redemption
+
+The bot's redemption service automatically claims winnings from resolved markets.
+
+---
+
+## Viewing Positions
+
+### Discord Commands
 
 ```
-🧹 Cleared purchase tracking (sold 100.0% of position)
+/positions - List all open positions with pagination
+/stats - Portfolio summary with total P&L
 ```
 
-## Backward compatibility
+### Console Logs
 
-- **Old positions** (without `myBoughtSize`): uses old logic (calculation from current position)
-- **New positions**: uses new tracking logic
-- Warning in logs: `⚠️ No tracked purchases found, using current position`
+Position updates appear in logs:
+```
+📊 Position Manager: Checking 3 positions for SL/TP triggers
+```
 
-## Migration
+### Polymarket Website
 
-No action required:
+View directly at:
+```
+https://polymarket.com/portfolio
+```
 
-- Existing positions will continue working with old logic
-- New purchases will automatically start being tracked
-- Gradually all positions will transition to the new system
+---
 
-## Testing
+## Stop-Loss / Take-Profit
 
-To verify it works:
+### Stop-Loss Triggers
 
-1. Buy a position with balance X
-2. Top up balance to Y (Y > X)
-3. Wait for trader to sell
-4. Check logs - should see "📊 Found N previous purchases"
-5. Verify that the correct number of tokens was sold
+When position drops below threshold:
+```
+🛑 STOP-LOSS triggered for "NYC Temperature Jan 20"
+   Current P&L: -25.0%, Size: 28.57 tokens
+   Sold 28.57 tokens at $0.26
+```
 
-## FAQ
+### Take-Profit Triggers
 
-**Q: What if I manually sell part of a position?**
-A: The system only tracks automatic bot trades. Manual sales are not counted.
+When position rises above threshold:
+```
+💰 TAKE-PROFIT triggered for "NYC Temperature Jan 20"
+   Current P&L: +50.0%, Size: 28.57 tokens
+   Sold 28.57 tokens at $0.52
+```
 
-**Q: What if trader closed the entire position?**
-A: Bot will sell your entire current position (doesn't depend on tracking).
+### Trailing Stop Triggers
 
-**Q: Can this feature be disabled?**
-A: No need - the system automatically falls back to old logic if tracking is unavailable.
+When price drops from peak:
+```
+📉 TRAILING-STOP triggered for "NYC Temperature Jan 20"
+   Current P&L: +35.0%, Peak P&L: +55.0%
+   Sold 28.57 tokens at $0.47
+```
+
+---
+
+## Database Schema
+
+### Bot Positions Collection
+
+```javascript
+{
+  conditionId: "0x...",
+  asset: "token_id",
+  tokensHeld: 28.57,
+  totalInvested: 10.00,
+  avgEntryPrice: 0.35,
+  createdAt: "2026-01-15T...",
+  updatedAt: "2026-01-15T..."
+}
+```
+
+### Peak Tracking (State Persistence)
+
+```javascript
+{
+  key: "position_peaks",
+  value: {
+    "0x...condition_id": {
+      peakPrice: 0.55,
+      peakPnlPercent: 55.0
+    }
+  }
+}
+```
+
+---
+
+## Troubleshooting
+
+### Positions not showing
+
+1. Check MongoDB connection
+2. Verify wallet address in `.env`
+3. Check Polymarket API directly
+
+### P&L incorrect
+
+1. Price data may be cached
+2. Wait for refresh cycle
+3. Check Polymarket website for live data
+
+### SL/TP not triggering
+
+1. Check `POSITION_CHECK_INTERVAL_MS`
+2. Verify SL/TP is enabled in `.env`
+3. Check logs for position manager errors

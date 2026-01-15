@@ -1,317 +1,411 @@
 # Deployment Guide
 
-This guide covers deploying the Polymarket Copy Trading Bot to production environments.
-
-## Prerequisites
-
-- Node.js 18+
-- MongoDB database (local or MongoDB Atlas)
-- Polygon wallet with USDC and POL
-- RPC endpoint (Infura, Alchemy, or custom)
+This guide covers deploying the Weather Prediction Bot to production environments.
 
 ## Deployment Options
 
-### Direct Node.js Deployment
+1. **Local machine** - For testing and development
+2. **VPS/Cloud server** - Recommended for 24/7 operation
+3. **Docker container** - For containerized deployments
 
-#### On Linux Server (systemd)
+---
 
-1. **Install dependencies:**
+## VPS Deployment (Recommended)
+
+### Requirements
+
+- Linux VPS (Ubuntu 22.04 recommended)
+- 1 GB RAM minimum
+- Node.js 18+
+- MongoDB (can use MongoDB Atlas)
+
+### Step 1: Server Setup
 
 ```bash
-npm ci --production
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Verify installation
+node --version  # Should be 18.x
+npm --version
+```
+
+### Step 2: Clone Repository
+
+```bash
+git clone <repository-url> /opt/weather-bot
+cd /opt/weather-bot
+npm install
+```
+
+### Step 3: Configure Environment
+
+```bash
+cp .env.example .env
+nano .env  # Edit with your configuration
+```
+
+**Important production settings**:
+```bash
+# Disable dry run for live trading
+WEATHER_DRY_RUN=false
+
+# Use production MongoDB
+MONGO_URI='mongodb+srv://...'
+
+# Discord notifications for monitoring
+DISCORD_NOTIFICATIONS_ENABLED=true
+```
+
+### Step 4: Build
+
+```bash
 npm run build
 ```
 
-2. **Create systemd service** (`/etc/systemd/system/polymarket-bot.service`):
+### Step 5: Create Systemd Service
+
+```bash
+sudo nano /etc/systemd/system/weather-bot.service
+```
 
 ```ini
 [Unit]
-Description=Polymarket Copy Trading Bot
-After=network.target mongod.service
+Description=Polymarket Weather Trading Bot
+After=network.target
 
 [Service]
 Type=simple
-User=your-user
-WorkingDirectory=/path/to/polymarket-copy-trading-bot
-Environment="NODE_ENV=production"
-ExecStart=/usr/bin/node dist/index.js
+User=www-data
+WorkingDirectory=/opt/weather-bot
+ExecStart=/usr/bin/node /opt/weather-bot/dist/index.js
 Restart=always
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
+Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-3. **Enable and start:**
+### Step 6: Start Service
 
 ```bash
-sudo systemctl enable polymarket-bot
-sudo systemctl start polymarket-bot
-sudo systemctl status polymarket-bot
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable on boot
+sudo systemctl enable weather-bot
+
+# Start the service
+sudo systemctl start weather-bot
+
+# Check status
+sudo systemctl status weather-bot
 ```
 
-4. **View logs:**
+### Step 7: View Logs
 
 ```bash
-sudo journalctl -u polymarket-bot -f
+# Real-time logs
+sudo journalctl -u weather-bot -f
+
+# Last 100 lines
+sudo journalctl -u weather-bot -n 100
 ```
 
-#### On VPS (PM2)
+---
 
-1. **Install PM2:**
+## Docker Deployment
 
-```bash
-npm install -g pm2
+### Dockerfile
+
+Create `Dockerfile` in project root:
+
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+RUN npm run build
+
+ENV NODE_ENV=production
+CMD ["node", "dist/index.js"]
 ```
 
-2. **Start application:**
+### Docker Compose
 
-```bash
-npm run build
-pm2 start dist/index.js --name polymarket-bot
-pm2 save
-pm2 startup
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+services:
+  weather-bot:
+    build: .
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
 ```
 
-3. **Monitor:**
+### Run with Docker
 
 ```bash
-pm2 status
-pm2 logs polymarket-bot
-pm2 monit
+# Build and start
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
 ```
 
-## Environment Configuration
+---
 
-### Required Variables
+## MongoDB Setup
 
-Ensure all required variables are set in `.env`:
+### Option 1: MongoDB Atlas (Recommended)
 
-- `USER_ADDRESSES` - Traders to copy
-- `PROXY_WALLET` - Your trading wallet
-- `PRIVATE_KEY` - Wallet private key
-- `MONGO_URI` - MongoDB connection string
-- `RPC_URL` - Polygon RPC endpoint
-- `CLOB_HTTP_URL` - Polymarket CLOB HTTP endpoint
-- `CLOB_WS_URL` - Polymarket CLOB WebSocket endpoint
-- `USDC_CONTRACT_ADDRESS` - USDC contract on Polygon
-
-### Security Best Practices
-
-1. **Never commit `.env` file** - It's already in `.gitignore`
-2. **Use environment variables in production** - Don't store secrets in files
-3. **Restrict file permissions:**
+1. Create account at [mongodb.com](https://mongodb.com)
+2. Create a free M0 cluster
+3. Add your IP to whitelist (or 0.0.0.0/0 for VPS)
+4. Create database user
+5. Get connection string
 
 ```bash
-chmod 600 .env
+MONGO_URI='mongodb+srv://username:password@cluster.mongodb.net/polymarket_weather'
 ```
 
-4. **Use secrets management** - Consider using:
-    - AWS Secrets Manager
-    - HashiCorp Vault
-    - Kubernetes Secrets
-
-## Health Checks
-
-### Manual Health Check
+### Option 2: Self-Hosted MongoDB
 
 ```bash
-npm run health-check
+# Install MongoDB
+sudo apt install -y mongodb
+
+# Start service
+sudo systemctl start mongodb
+sudo systemctl enable mongodb
+
+# Connection string
+MONGO_URI='mongodb://localhost:27017/polymarket_weather'
 ```
 
-### Automated Monitoring
+---
 
-Set up monitoring to check:
+## RPC Endpoint Setup
 
-1. **Process status** - Is the bot running?
-2. **Health check endpoint** - (if implemented)
-3. **MongoDB connection** - Database connectivity
-4. **RPC endpoint** - Blockchain connectivity
-5. **USDC balance** - Sufficient funds
+### Infura (Free Tier)
 
-### Example Monitoring Script
+1. Create account at [infura.io](https://infura.io)
+2. Create new project
+3. Select Polygon network
+4. Copy endpoint URL
 
 ```bash
-#!/bin/bash
-# health-monitor.sh
-
-if ! pgrep -f "node.*dist/index.js" > /dev/null; then
-    echo "Bot process not running!"
-    # Restart or alert
-fi
-
-npm run health-check || echo "Health check failed!"
+RPC_URL='https://polygon-mainnet.infura.io/v3/YOUR_PROJECT_ID'
 ```
 
-## Logging
+### Alchemy (Alternative)
 
-### Log Locations
-
-- **systemd:** `journalctl -u polymarket-bot`
-- **PM2:** `pm2 logs polymarket-bot`
-
-### Log Rotation
-
-Configure log rotation to prevent disk space issues:
+1. Create account at [alchemy.com](https://alchemy.com)
+2. Create new app on Polygon
+3. Copy API key
 
 ```bash
-# /etc/logrotate.d/polymarket-bot
-/path/to/polymarket-bot/logs/*.log {
+RPC_URL='https://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY'
+```
+
+---
+
+## Discord Bot Setup
+
+### Create Discord Application
+
+1. Go to [Discord Developer Portal](https://discord.com/developers)
+2. Click "New Application"
+3. Name it (e.g., "Weather Bot")
+4. Go to "Bot" section
+5. Click "Add Bot"
+6. Copy the token
+
+### Get IDs
+
+```bash
+DISCORD_BOT_TOKEN='your_bot_token_here'
+DISCORD_CLIENT_ID='your_app_client_id'
+DISCORD_GUILD_ID='your_server_id'  # Right-click server → Copy ID
+```
+
+### Invite Bot to Server
+
+1. Go to OAuth2 → URL Generator
+2. Select scopes: `bot`, `applications.commands`
+3. Select permissions: `Send Messages`, `Embed Links`
+4. Copy and open the generated URL
+
+---
+
+## Monitoring & Alerting
+
+### Discord Webhook Notifications
+
+Enable in `.env`:
+```bash
+DISCORD_NOTIFICATIONS_ENABLED=true
+DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'
+```
+
+You'll receive notifications for:
+- Bot startup
+- Trade executions
+- Stop-loss/take-profit triggers
+- Errors
+
+### Log Monitoring
+
+The bot writes logs to `logs/` directory:
+- `logs/bot-YYYY-MM-DD.log`
+
+Set up log rotation:
+```bash
+sudo nano /etc/logrotate.d/weather-bot
+```
+
+```
+/opt/weather-bot/logs/*.log {
     daily
-    rotate 7
+    rotate 14
     compress
     missingok
     notifempty
 }
 ```
 
-## Backup and Recovery
+---
 
-### MongoDB Backup
+## Security Best Practices
 
-```bash
-# Backup
-mongodump --uri="mongodb://localhost:27017/polymarket_copytrading" --out=/backup/$(date +%Y%m%d)
+### 1. Never Commit Secrets
 
-# Restore
-mongorestore --uri="mongodb://localhost:27017/polymarket_copytrading" /backup/20240101
+Ensure `.env` is in `.gitignore`:
+```
+.env
 ```
 
-## Scaling Considerations
+### 2. Restrict File Permissions
 
-### Single Instance
+```bash
+chmod 600 /opt/weather-bot/.env
+```
 
-- Suitable for personal use
-- Handles multiple traders
-- Simple deployment
+### 3. Use Separate Wallet
 
-### Multiple Instances (Advanced)
+Don't use your main wallet. Create a dedicated wallet for the bot.
 
-⚠️ **Warning:** Running multiple instances requires careful coordination:
+### 4. Limit Wallet Balance
 
-- Use distributed locking (Redis)
-- Ensure only one instance processes trades
-- Coordinate MongoDB access
-- Consider message queue (RabbitMQ, Redis)
+Only fund what you're willing to risk.
+
+### 5. Firewall Rules
+
+```bash
+# Allow only necessary ports
+sudo ufw allow ssh
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw enable
+```
+
+---
+
+## Updating the Bot
+
+### Manual Update
+
+```bash
+cd /opt/weather-bot
+git pull
+npm install
+npm run build
+sudo systemctl restart weather-bot
+```
+
+### Automated Update Script
+
+Create `update.sh`:
+```bash
+#!/bin/bash
+cd /opt/weather-bot
+git pull
+npm install
+npm run build
+sudo systemctl restart weather-bot
+echo "Update complete!"
+```
+
+```bash
+chmod +x update.sh
+./update.sh
+```
+
+---
 
 ## Troubleshooting
 
-### Bot Not Starting
-
-1. Check environment variables:
+### Bot not starting
 
 ```bash
-npm run health-check
+# Check logs
+sudo journalctl -u weather-bot -n 50
+
+# Common issues:
+# - Missing .env file
+# - Invalid MongoDB URI
+# - Node.js not found
 ```
 
-2. Verify MongoDB connection:
+### Connection errors
 
 ```bash
-mongosh "mongodb://your-connection-string"
-```
+# Test MongoDB
+mongosh "your_connection_string"
 
-3. Check RPC endpoint:
-
-```bash
+# Test RPC
 curl -X POST -H "Content-Type: application/json" \
   --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  $RPC_URL
+  YOUR_RPC_URL
 ```
 
-### Trades Not Executing
+### High memory usage
 
-1. Check USDC balance:
-
+Increase swap space:
 ```bash
-npm run check-allowance
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
 ```
 
-2. Verify trader addresses are active
-3. Check logs for errors
-4. Ensure sufficient POL for gas
+---
 
-### High Memory Usage
+## Production Checklist
 
-- Reduce `FETCH_INTERVAL` if too low
-- Limit number of traders
-- Monitor MongoDB connection pool
-- Consider increasing Node.js memory limit:
-
-```bash
-NODE_OPTIONS="--max-old-space-size=2048" node dist/index.js
-```
-
-## Updates and Maintenance
-
-### Updating the Bot
-
-1. **Pull latest changes:**
-
-```bash
-git pull origin main
-```
-
-2. **Rebuild:**
-
-```bash
-npm ci
-npm run build
-```
-
-3. **Restart:**
-
-```bash
-# systemd
-sudo systemctl restart polymarket-bot
-
-# PM2
-pm2 restart polymarket-bot
-```
-
-### Zero-Downtime Updates
-
-For production, use rolling updates:
-
-1. Deploy new version alongside old
-2. Verify health
-3. Switch traffic
-4. Stop old version
-
-## Performance Tuning
-
-### Recommended Settings
-
-- **FETCH_INTERVAL:** 1-3 seconds (balance speed vs API load)
-- **RETRY_LIMIT:** 3 (sufficient for transient errors)
-- **REQUEST_TIMEOUT_MS:** 10000 (10 seconds)
-
-### Resource Requirements
-
-- **CPU:** 1-2 cores
-- **RAM:** 512MB - 1GB
-- **Disk:** 10GB (for MongoDB data)
-- **Network:** Stable connection to Polygon RPC
-
-## Security Checklist
-
-- [ ] `.env` file has restricted permissions (600)
-- [ ] Private keys are not logged
-- [ ] MongoDB is not exposed to public internet
-- [ ] RPC endpoint uses HTTPS
-- [ ] Regular security updates applied
-- [ ] Firewall configured (if applicable)
-- [ ] Monitoring and alerting set up
-
-## Support
-
-For issues or questions:
-
-1. Check [Troubleshooting](#troubleshooting) section
-2. Review logs for error messages
-3. Run health check: `npm run health-check`
-4. Open GitHub issue with:
-    - Error logs
-    - Configuration (redacted)
-    - Steps to reproduce
+- [ ] `.env` configured with production values
+- [ ] `WEATHER_DRY_RUN=false` for live trading
+- [ ] MongoDB connected and accessible
+- [ ] RPC endpoint working
+- [ ] Wallet funded with USDC
+- [ ] Discord notifications enabled
+- [ ] Systemd service created and enabled
+- [ ] Logs being written
+- [ ] Firewall configured
+- [ ] Backup strategy for database

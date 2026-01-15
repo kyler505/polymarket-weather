@@ -7,7 +7,7 @@ import { ClobClient, OrderType, Side } from '@polymarket/clob-client';
 import { ENV } from '../config/env';
 import fetchData from '../utils/fetchData';
 import Logger from '../utils/logger';
-import { getBestBid } from '../utils/orders/orderHelpers';
+import { getBestBid } from '../utils/orderUtils';
 import { sleep } from '../utils/rateLimiter';
 import createClobClient from '../utils/createClobClient';
 

@@ -12,7 +12,7 @@ import Logger from '../utils/logger';
 
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 const NOTIFICATIONS_ENABLED = process.env.DISCORD_NOTIFICATIONS_ENABLED === 'true';
-const BOT_NAME = process.env.DISCORD_BOT_NAME || '🤖 Polymarket Bot';
+const BOT_NAME = process.env.DISCORD_BOT_NAME || '🌤️ Weather Trading Bot';
 
 // Notification types that can be enabled/disabled
 const NOTIFY_TRADES = process.env.DISCORD_NOTIFY_TRADES !== 'false'; // default: true
@@ -103,24 +103,30 @@ const sendWebhook = async (embeds: DiscordEmbed[]): Promise<boolean> => {
 export const notifyTrade = async (params: {
     side: 'BUY' | 'SELL';
     market: string;
-    amount: number;
+    outcome?: string;
     price: number;
-    trader?: string;
+    size: number;
+    edge?: number;
+    reason?: string;
 }): Promise<void> => {
     if (!NOTIFY_TRADES) return;
 
     const emoji = params.side === 'BUY' ? '🟢' : '🔴';
     const color = params.side === 'BUY' ? COLORS.BUY : COLORS.SELL;
 
+    const fields = [
+        { name: 'Market', value: params.market.substring(0, 100), inline: false },
+        ...(params.outcome ? [{ name: 'Outcome', value: params.outcome, inline: true }] : []),
+        { name: 'Size', value: `$${params.size.toFixed(2)}`, inline: true },
+        { name: 'Price', value: `$${params.price.toFixed(3)}`, inline: true },
+        ...(params.edge !== undefined ? [{ name: 'Edge', value: `${(params.edge * 100).toFixed(1)}%`, inline: true }] : []),
+        ...(params.reason ? [{ name: 'Reason', value: params.reason, inline: false }] : []),
+    ];
+
     await sendWebhook([{
         title: `${emoji} ${params.side} Order Executed`,
         color,
-        fields: [
-            { name: 'Market', value: params.market, inline: false },
-            { name: 'Amount', value: `$${params.amount.toFixed(2)}`, inline: true },
-            { name: 'Price', value: `$${params.price.toFixed(3)}`, inline: true },
-            ...(params.trader ? [{ name: 'Copying', value: `\`${params.trader.slice(0, 10)}...\``, inline: true }] : []),
-        ],
+        fields,
     }]);
 };
 
@@ -215,21 +221,21 @@ export const notifyError = async (params: {
  * Notify on bot startup
  */
 export const notifyStartup = async (params: {
-    traders: number;
+    markets?: number;
     balance: number;
     positions: number;
 }): Promise<void> => {
     if (!NOTIFY_STARTUP) return;
 
     await sendWebhook([{
-        title: '🚀 Bot Started',
+        title: '🌤️ Weather Trading Bot Started',
         color: COLORS.INFO,
         fields: [
-            { name: 'Traders', value: `${params.traders}`, inline: true },
+            ...(params.markets !== undefined ? [{ name: 'Markets', value: `${params.markets}`, inline: true }] : []),
             { name: 'Balance', value: `$${params.balance.toFixed(2)}`, inline: true },
             { name: 'Positions', value: `${params.positions}`, inline: true },
         ],
-        footer: { text: 'Polymarket Copy Trading Bot' },
+        footer: { text: 'Polymarket Weather Prediction Bot' },
     }]);
 };
 
