@@ -10,6 +10,7 @@ import { startRedemptionService, stopRedemptionService } from './services/redemp
 import { startPositionManager, stopPositionManager } from './services/positionManager';
 import { updateAllTraderScores } from './services/traderAnalytics';
 import { logNotificationConfig, notifyStartup, isNotificationsEnabled } from './services/discordNotifier';
+import { startDiscordBot, stopDiscordBot } from './services/discordBot';
 import fetchData from './utils/fetchData';
 import getMyBalance from './utils/getMyBalance';
 
@@ -35,6 +36,7 @@ const gracefulShutdown = async (signal: string) => {
         stopTradeExecutor();
         stopRedemptionService();
         stopPositionManager();
+        await stopDiscordBot();
 
         // Give services time to finish current operations
         Logger.info('Waiting for services to finish current operations...');
@@ -111,6 +113,9 @@ export const main = async () => {
 
         startRedemptionService();
         startPositionManager();
+
+        // Start Discord bot (if enabled)
+        await startDiscordBot();
 
         // Initial trader scoring update (if enabled)
         if (ENV.TRADER_SCORING_ENABLED) {
