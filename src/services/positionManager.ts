@@ -167,6 +167,7 @@ const shouldTriggerTrailingStop = (position: PositionWithPeak): boolean => {
     const dropFromPeak = position.peakPnlPercent - currentPnlPercent;
     return dropFromPeak >= ENV.TRAILING_STOP_PERCENT;
 };
+import { notifyStopLoss, notifyTakeProfit, notifyTrailingStop } from './discordNotifier';
 
 /**
  * Execute a sell order for a position
@@ -174,11 +175,13 @@ const shouldTriggerTrailingStop = (position: PositionWithPeak): boolean => {
 const executeSell = async (
     clobClient: ClobClient,
     position: Position,
-    reason: 'stop-loss' | 'take-profit' | 'trailing-stop'
+    reason: 'stop-loss' | 'take-profit' | 'trailing-stop',
+    peakPnl?: number
 ): Promise<boolean> => {
     try {
+        const pnlPercent = calculatePnlPercent(position);
         Logger.info(`🔔 ${reason.toUpperCase()} triggered for ${position.title || position.conditionId}`);
-        Logger.info(`   Current P&L: ${calculatePnlPercent(position).toFixed(1)}%, Size: ${position.size.toFixed(2)} tokens`);
+        Logger.info(`   Current P&L: ${pnlPercent.toFixed(1)}%, Size: ${position.size.toFixed(2)} tokens`);
 
         const orderBook = await clobClient.getOrderBook(position.asset);
         const bestBid = getBestBid(orderBook.bids || []);
@@ -216,6 +219,16 @@ const executeSell = async (
 
             // Clear peak tracking for this position
             positionPeaks.delete(position.conditionId);
+
+            // Send Discord notification
+            const marketName = position.title || position.conditionId.slice(0, 10) + '...';
+            if (reason === 'stop-loss') {
+                notifyStopLoss({ market: marketName, tokens: sellAmount, price: bidPrice, pnlPercent });
+            } else if (reason === 'take-profit') {
+                notifyTakeProfit({ market: marketName, tokens: sellAmount, price: bidPrice, pnlPercent });
+            } else if (reason === 'trailing-stop') {
+                notifyTrailingStop({ market: marketName, tokens: sellAmount, price: bidPrice, pnlPercent, peakPnl: peakPnl || 0 });
+            }
 
             return true;
         } else {
@@ -262,7 +275,7 @@ const checkPositions = async (): Promise<void> => {
                 await executeSell(clobClientInstance, position, 'take-profit');
                 await sleep(2000);
             } else if (shouldTriggerTrailingStop(positionWithPeak)) {
-                await executeSell(clobClientInstance, position, 'trailing-stop');
+                await executeSell(clobClientInstance, position, 'trailing-stop', positionWithPeak.peakPnlPercent);
                 await sleep(2000);
             }
         }

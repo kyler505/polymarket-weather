@@ -9,6 +9,9 @@ import { performHealthCheck, logHealthCheck } from './utils/healthCheck';
 import { startRedemptionService, stopRedemptionService } from './services/redemptionService';
 import { startPositionManager, stopPositionManager } from './services/positionManager';
 import { updateAllTraderScores } from './services/traderAnalytics';
+import { logNotificationConfig, notifyStartup, isNotificationsEnabled } from './services/discordNotifier';
+import fetchData from './utils/fetchData';
+import getMyBalance from './utils/getMyBalance';
 
 const USER_ADDRESSES = ENV.USER_ADDRESSES;
 const PROXY_WALLET = ENV.PROXY_WALLET;
@@ -83,6 +86,9 @@ export const main = async () => {
         await connectDB();
         Logger.startup(USER_ADDRESSES, PROXY_WALLET);
 
+        // Log notification configuration
+        logNotificationConfig();
+
         // Perform initial health check
         Logger.info('Performing initial health check...');
         const healthResult = await performHealthCheck();
@@ -110,6 +116,23 @@ export const main = async () => {
         if (ENV.TRADER_SCORING_ENABLED) {
             Logger.info('Updating initial trader scores...');
             updateAllTraderScores().catch(err => Logger.warning(`Initial trader scoring failed: ${err}`));
+        }
+
+        // Send Discord startup notification
+        if (isNotificationsEnabled()) {
+            try {
+                const balance = await getMyBalance(PROXY_WALLET);
+                const positions = await fetchData(`https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`);
+                const positionCount = Array.isArray(positions) ? positions.length : 0;
+
+                await notifyStartup({
+                    traders: USER_ADDRESSES.length,
+                    balance,
+                    positions: positionCount,
+                });
+            } catch (err) {
+                Logger.warning(`Failed to send startup notification: ${err}`);
+            }
         }
 
         // test(clobClient);
