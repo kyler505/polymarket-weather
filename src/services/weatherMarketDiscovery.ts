@@ -300,16 +300,23 @@ function eventToWeatherMarket(event: PolymarketEvent): WeatherMarket | null {
     };
 }
 
+import { notifyMarketDiscovery } from './discordNotifier';
+
 /**
  * Discover and parse all active weather markets
  */
 export async function discoverWeatherMarkets(): Promise<WeatherMarket[]> {
     Logger.info('Discovering weather markets on Polymarket (Weather tag)...');
 
+    // Get currently tracked markets to identify new ones
+    const existingMarkets = await getTrackedWeatherMarkets();
+    const existingIds = new Set(existingMarkets.map(m => m.conditionId));
+
     const events = await fetchWeatherEvents();
     Logger.info(`Found ${events.length} weather-related events`);
 
     const weatherMarkets: WeatherMarket[] = [];
+    const newDiscoveredMarkets: Array<{ title: string; date: string; station: string }> = [];
     const minConfidence = ENV.WEATHER_MIN_PARSER_CONFIDENCE;
 
     for (const event of events) {
@@ -317,6 +324,15 @@ export async function discoverWeatherMarkets(): Promise<WeatherMarket[]> {
 
         if (market && market.confidence >= minConfidence) {
             weatherMarkets.push(market);
+
+            // Check if new
+            if (!existingIds.has(market.conditionId)) {
+                newDiscoveredMarkets.push({
+                    title: market.title,
+                    date: market.targetDate,
+                    station: market.stationName
+                });
+            }
 
             // Store in database
             try {
@@ -337,6 +353,19 @@ export async function discoverWeatherMarkets(): Promise<WeatherMarket[]> {
         }
     } catch (error) {
         Logger.debug(`Failed to mark expired: ${error}`);
+    }
+
+    // Notify if new markets found
+    if (newDiscoveredMarkets.length > 0) {
+        try {
+            await notifyMarketDiscovery({
+                count: newDiscoveredMarkets.length,
+                markets: newDiscoveredMarkets
+            });
+            Logger.success(`Notified discovered of ${newDiscoveredMarkets.length} new markets`);
+        } catch (error) {
+            Logger.warning(`Failed to send discovery notification: ${error}`);
+        }
     }
 
     Logger.success(`Discovered ${weatherMarkets.length} valid weather markets`);

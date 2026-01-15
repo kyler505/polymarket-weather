@@ -41,6 +41,22 @@ async function executeSignal(signal: WeatherTradeSignal): Promise<boolean> {
             assetId: signal.bin.tokenId // Using tokenId as assetId
         });
 
+        // Send Discord notification for Dry Run
+        try {
+            await notifyTrade({
+                side: signal.side,
+                market: signal.market.title,
+                outcome: signal.bin.label,
+                price: signal.marketPrice,
+                size: signal.recommendedSizeUSD,
+                edge: signal.edge,
+                reason: signal.reason,
+                isDryRun: true
+            });
+        } catch (notifyError) {
+            Logger.debug(`Dry run discord notification failed: ${notifyError}`);
+        }
+
         return true;
     }
 

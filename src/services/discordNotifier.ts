@@ -38,6 +38,8 @@ const COLORS = {
     STOP_LOSS: 0xff0000, // Red
     TAKE_PROFIT: 0x00ff00, // Green
     TRAILING_STOP: 0xffaa00, // Amber
+    DRY_RUN: 0x808080, // Grey for dry run
+    DISCOVERY: 0x9b59b6, // Purple for market discovery
 };
 
 // ============================================================================
@@ -47,6 +49,7 @@ const COLORS = {
 interface DiscordEmbed {
     title: string;
     description?: string;
+    url?: string;
     color: number;
     fields?: Array<{ name: string; value: string; inline?: boolean }>;
     footer?: { text: string };
@@ -108,11 +111,16 @@ export const notifyTrade = async (params: {
     size: number;
     edge?: number;
     reason?: string;
+    isDryRun?: boolean;
 }): Promise<void> => {
     if (!NOTIFY_TRADES) return;
 
+    const isDryRun = params.isDryRun === true;
+    const prefix = isDryRun ? '[DRY RUN] ' : '';
     const emoji = params.side === 'BUY' ? '🟢' : '🔴';
-    const color = params.side === 'BUY' ? COLORS.BUY : COLORS.SELL;
+
+    // Use grey for dry run, otherwise Green/Orange
+    const color = isDryRun ? COLORS.DRY_RUN : (params.side === 'BUY' ? COLORS.BUY : COLORS.SELL);
 
     const fields = [
         { name: 'Market', value: params.market.substring(0, 100), inline: false },
@@ -124,8 +132,40 @@ export const notifyTrade = async (params: {
     ];
 
     await sendWebhook([{
-        title: `${emoji} ${params.side} Order Executed`,
+        title: `${emoji} ${prefix}${params.side} Order Executed`,
         color,
+        fields,
+        footer: isDryRun ? { text: 'Simulated Trade (No funds used)' } : undefined
+    }]);
+};
+
+/**
+ * Notify on new market discovery
+ */
+export const notifyMarketDiscovery = async (params: {
+    count: number;
+    markets: Array<{ title: string; date: string; station: string }>;
+}): Promise<void> => {
+    // Only verify discovery if count > 0
+    if (params.count === 0) return;
+
+    const fields = params.markets.slice(0, 5).map(m => ({
+        name: `${m.station} (${m.date})`,
+        value: m.title.substring(0, 60) + (m.title.length > 60 ? '...' : ''),
+        inline: false
+    }));
+
+    if (params.markets.length > 5) {
+        fields.push({
+            name: 'And others...',
+            value: `+${params.markets.length - 5} more markets`,
+            inline: false
+        });
+    }
+
+    await sendWebhook([{
+        title: `🔎 Discovered ${params.count} New Markets`,
+        color: COLORS.DISCOVERY,
         fields,
     }]);
 };
