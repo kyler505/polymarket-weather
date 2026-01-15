@@ -1,9 +1,4 @@
-/**
- * Discord Bot Service
- * Interactive slash commands for bot control and analytics
- */
-
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction } from 'discord.js';
 import { ENV } from '../config/env';
 import fetchData from '../utils/fetchData';
 import getMyBalance from '../utils/getMyBalance';
@@ -18,6 +13,7 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || ''; // Optional: for faster command registration
 
 const BOT_ENABLED = process.env.DISCORD_BOT_ENABLED === 'true';
+const POSITIONS_PER_PAGE = 5;
 
 // Bot state
 let client: Client | null = null;
@@ -100,6 +96,75 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
     }
 };
 
+/**
+ * Build positions embed for a specific page
+ */
+const buildPositionsEmbed = (positionList: any[], page: number, totalPages: number): EmbedBuilder => {
+    const start = page * POSITIONS_PER_PAGE;
+    const end = Math.min(start + POSITIONS_PER_PAGE, positionList.length);
+    const pagePositions = positionList.slice(start, end);
+
+    const embed = new EmbedBuilder()
+        .setTitle(`📈 Open Positions (${positionList.length})`)
+        .setColor(0x0099ff)
+        .setTimestamp();
+
+    for (let i = 0; i < pagePositions.length; i++) {
+        const pos = pagePositions[i];
+        const pnlPercent = pos.percentPnl || 0;
+        const emoji = pnlPercent >= 0 ? '🟢' : '🔴';
+        const pnlSign = pnlPercent >= 0 ? '+' : '';
+        const globalIndex = start + i + 1;
+
+        embed.addFields({
+            name: `${emoji} ${globalIndex}. ${(pos.title || 'Unknown').slice(0, 45)}`,
+            value: `**${pos.outcome}** | ${pos.size?.toFixed(2)} tokens @ $${pos.avgPrice?.toFixed(3)}\nValue: $${pos.currentValue?.toFixed(2)} | P&L: ${pnlSign}${pnlPercent.toFixed(1)}%`,
+            inline: false,
+        });
+    }
+
+    embed.setFooter({ text: `Page ${page + 1} of ${totalPages} • ${positionList.length} total positions` });
+
+    return embed;
+};
+
+/**
+ * Build pagination buttons
+ */
+const buildPaginationButtons = (currentPage: number, totalPages: number): ActionRowBuilder<ButtonBuilder> => {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+
+    row.addComponents(
+        new ButtonBuilder()
+            .setCustomId('positions_first')
+            .setLabel('⏮️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(currentPage === 0),
+        new ButtonBuilder()
+            .setCustomId('positions_prev')
+            .setLabel('◀️ Prev')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(currentPage === 0),
+        new ButtonBuilder()
+            .setCustomId('positions_page')
+            .setLabel(`${currentPage + 1}/${totalPages}`)
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true),
+        new ButtonBuilder()
+            .setCustomId('positions_next')
+            .setLabel('Next ▶️')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(currentPage >= totalPages - 1),
+        new ButtonBuilder()
+            .setCustomId('positions_last')
+            .setLabel('⏭️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(currentPage >= totalPages - 1),
+    );
+
+    return row;
+};
+
 const handlePositions = async (interaction: ChatInputCommandInteraction): Promise<void> => {
     await interaction.deferReply();
 
@@ -115,30 +180,68 @@ const handlePositions = async (interaction: ChatInputCommandInteraction): Promis
         // Sort by value descending
         positionList.sort((a: any, b: any) => (b.currentValue || 0) - (a.currentValue || 0));
 
-        const embed = new EmbedBuilder()
-            .setTitle(`📈 Open Positions (${positionList.length})`)
-            .setColor(0x0099ff)
-            .setTimestamp();
+        const totalPages = Math.ceil(positionList.length / POSITIONS_PER_PAGE);
+        let currentPage = 0;
 
-        // Add top 10 positions
-        const topPositions = positionList.slice(0, 10);
-        for (const pos of topPositions) {
-            const pnlPercent = pos.percentPnl || 0;
-            const emoji = pnlPercent >= 0 ? '🟢' : '🔴';
-            const pnlSign = pnlPercent >= 0 ? '+' : '';
+        const embed = buildPositionsEmbed(positionList, currentPage, totalPages);
+        const buttons = buildPaginationButtons(currentPage, totalPages);
 
-            embed.addFields({
-                name: `${emoji} ${(pos.title || 'Unknown').slice(0, 50)}`,
-                value: `**${pos.outcome}** | ${pos.size?.toFixed(2)} tokens @ $${pos.avgPrice?.toFixed(3)}\nValue: $${pos.currentValue?.toFixed(2)} | P&L: ${pnlSign}${pnlPercent.toFixed(1)}%`,
-                inline: false,
+        const message = await interaction.editReply({
+            embeds: [embed],
+            components: totalPages > 1 ? [buttons] : [],
+        });
+
+        if (totalPages <= 1) return;
+
+        // Create button collector
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 120000, // 2 minutes
+        });
+
+        collector.on('collect', async (buttonInteraction: ButtonInteraction) => {
+            // Only respond to the original user
+            if (buttonInteraction.user.id !== interaction.user.id) {
+                await buttonInteraction.reply({ content: '❌ Only the command user can navigate', ephemeral: true });
+                return;
+            }
+
+            switch (buttonInteraction.customId) {
+                case 'positions_first':
+                    currentPage = 0;
+                    break;
+                case 'positions_prev':
+                    currentPage = Math.max(0, currentPage - 1);
+                    break;
+                case 'positions_next':
+                    currentPage = Math.min(totalPages - 1, currentPage + 1);
+                    break;
+                case 'positions_last':
+                    currentPage = totalPages - 1;
+                    break;
+            }
+
+            const newEmbed = buildPositionsEmbed(positionList, currentPage, totalPages);
+            const newButtons = buildPaginationButtons(currentPage, totalPages);
+
+            await buttonInteraction.update({
+                embeds: [newEmbed],
+                components: [newButtons],
             });
-        }
+        });
 
-        if (positionList.length > 10) {
-            embed.setFooter({ text: `Showing 10 of ${positionList.length} positions` });
-        }
+        collector.on('end', async () => {
+            // Disable buttons after timeout
+            try {
+                const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder().setCustomId('expired').setLabel('Session Expired').setStyle(ButtonStyle.Secondary).setDisabled(true)
+                );
+                await interaction.editReply({ components: [disabledRow] });
+            } catch {
+                // Message may have been deleted
+            }
+        });
 
-        await interaction.editReply({ embeds: [embed] });
     } catch (error) {
         await interaction.editReply(`❌ Error fetching positions: ${error}`);
     }
