@@ -75,9 +75,21 @@ export class PaperTradingService {
     }
 
     public recordTrade(trade: Omit<PaperTrade, 'id' | 'timestamp' | 'shares'>): void {
-        const shares = trade.amountUSD / trade.price;
+        // Simulate spread/slippage for realism (Pessimistic Paper Trading)
+        // Buy higher, Sell lower
+        const SPREAD = 0.02; // 2% spread adjustment
+        let effectivePrice = trade.price;
+
+        if (trade.side === 'BUY') {
+            effectivePrice = Math.min(0.99, trade.price + (SPREAD / 2));
+        } else {
+            effectivePrice = Math.max(0.01, trade.price - (SPREAD / 2));
+        }
+
+        const shares = trade.amountUSD / effectivePrice;
         const newTrade: PaperTrade = {
             ...trade,
+            price: effectivePrice, // Use the effective price
             id: Math.random().toString(36).substring(7),
             timestamp: new Date().toISOString(),
             shares
@@ -98,7 +110,7 @@ export class PaperTradingService {
 
         this.savePortfolio();
 
-        Logger.success(`[PAPER] Recorded ${trade.side} ${trade.amountUSD.toFixed(2)} of ${trade.outcomeLabel} @ ${trade.price.toFixed(2)}`);
+        Logger.success(`[PAPER] Recorded ${trade.side} ${trade.amountUSD.toFixed(2)} of ${trade.outcomeLabel} @ ${effectivePrice.toFixed(3)} (incl. spread)`);
         Logger.info(`[PAPER] New Balance: $${this.portfolio.balance.toFixed(2)}`);
     }
 

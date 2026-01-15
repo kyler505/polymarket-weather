@@ -83,7 +83,11 @@ export async function runBacktest(config: BacktestConfig) {
             { max: actuals.maxTemp, min: actuals.minTemp },
             {
                 mode: 'SYNTHETIC',
-                syntheticParams: { biasMean: 0, noiseScale: 1.0, useStudentT: false }
+                syntheticParams: {
+                    biasMean: 0,
+                    noiseScale: 0.8, // Market is slightly BETTER than bot (default 1.0) - Hard Mode
+                    useStudentT: false
+                }
             }
         );
 

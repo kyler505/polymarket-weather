@@ -95,6 +95,21 @@ export function canTrade(market: WeatherMarket, sizeUSD: number): { allowed: boo
         };
     }
 
+    // Check total global exposure
+    // Calculate current total
+    let currentTotalExposure = 0;
+    for (const exp of exposure.perMarket.values()) currentTotalExposure += exp;
+
+    // Default global limit if not in ENV (safe fallback)
+    const MAX_TOTAL = process.env.MAX_TOTAL_EXPOSURE_USD ? parseFloat(process.env.MAX_TOTAL_EXPOSURE_USD) : 250.0;
+
+    if (currentTotalExposure + sizeUSD > MAX_TOTAL) {
+        return {
+            allowed: false,
+            reason: `Total exposure limit ($${MAX_TOTAL}) would be exceeded`
+        };
+    }
+
     // Check minimum order size
     if (sizeUSD < ENV.MIN_ORDER_SIZE_USD) {
         return { allowed: false, reason: `Size $${sizeUSD.toFixed(2)} below minimum $${ENV.MIN_ORDER_SIZE_USD}` };
