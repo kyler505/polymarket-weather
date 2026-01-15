@@ -306,6 +306,32 @@ async function main() {
             await runBatch(generateConfigs('full'));
             break;
 
+        // Non-interactive mode using traders from .env
+        case 'env': {
+            const preset = (args[1] as keyof typeof PRESETS) || 'standard';
+            if (!['quick', 'standard', 'full'].includes(preset)) {
+                console.log(colors.red(`Error: Invalid preset "${preset}"`));
+                console.log(colors.yellow('Valid presets: quick, standard, full'));
+                return;
+            }
+
+            if (!ENV.USER_ADDRESSES || ENV.USER_ADDRESSES.length === 0) {
+                console.log(colors.red('Error: No USER_ADDRESSES configured in .env'));
+                return;
+            }
+
+            console.log(colors.green(`\n✓ Using ${ENV.USER_ADDRESSES.length} traders from .env:`));
+            ENV.USER_ADDRESSES.slice(0, 5).forEach((addr, i) => {
+                console.log(`   ${i + 1}. ${addr.slice(0, 10)}...`);
+            });
+            if (ENV.USER_ADDRESSES.length > 5) {
+                console.log(colors.gray(`   ... and ${ENV.USER_ADDRESSES.length - 5} more`));
+            }
+
+            await runBatch(generateConfigs(preset as keyof typeof PRESETS, ENV.USER_ADDRESSES));
+            break;
+        }
+
         case 'custom': {
             const trader = args[1];
             const days = parseInt(args[2] || '30');

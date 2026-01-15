@@ -28,6 +28,7 @@
         "redeem-resolved": "ts-node src/scripts/redeemResolvedPositions.ts",
         "check-activity": "ts-node src/scripts/checkRecentActivity.ts",
         "find-traders": "ts-node src/scripts/findBestTraders.ts",
+        "discover": "ts-node src/scripts/discoverAndSimulate.ts",
         "find-low-risk": "ts-node src/scripts/findLowRiskTraders.ts",
         "aggregate": "ts-node src/scripts/aggregateResults.ts",
         "audit": "ts-node src/scripts/auditCopyTradingAlgorithmFixed.ts",
