@@ -329,7 +329,7 @@ async function testProbabilityEngine(): Promise<void> {
             const fairProb = fairProbs.get(bin.tokenId) || 0;
             const marketPrice = prices.get(bin.tokenId) || 0;
             const edge = fairProb - marketPrice;
-            const kelly = kellyFraction(fairProb, marketPrice, 0.25);
+            const kelly = kellyFraction(fairProb, marketPrice, 0.05);
 
             if (edge > bestEdge) {
                 bestEdge = edge;

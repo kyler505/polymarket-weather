@@ -21,7 +21,7 @@ const weatherBinSchema = new Schema<WeatherBin>({
 }, { _id: false });
 
 const weatherMarketSchema = new Schema<IWeatherMarket>({
-    conditionId: { type: String, required: true, unique: true, index: true },
+    conditionId: { type: String, required: true, unique: true },
     marketSlug: { type: String, required: true },
     title: { type: String, required: true },
     stationId: { type: String, required: true, index: true },

@@ -352,57 +352,67 @@ export async function getTrackedWeatherMarkets(): Promise<WeatherMarket[]> {
 }
 
 /**
- * Fetch current prices for market tokens
+ * Fetch current prices from Gamma API for weather markets
  */
-async function fetchMarketPrices(tokenIds: string[]): Promise<Map<string, number>> {
-    const prices = new Map<string, number>();
+async function fetchEventPrices(eventSlugs: string[]): Promise<Map<string, Map<string, number>>> {
+    const marketPrices = new Map<string, Map<string, number>>();
 
-    try {
-        const url = `${ENV.CLOB_HTTP_URL}/prices`;
-        const response = await axios.post(url, { token_ids: tokenIds }, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 10000,
-        });
+    for (const slug of eventSlugs) {
+        try {
+            const url = `${GAMMA_API_URL}/events/slug/${slug}`;
+            const response = await axios.get(url, { timeout: 15000 });
+            const event = response.data;
 
-        if (response.data) {
-            for (const [tokenId, priceData] of Object.entries(response.data)) {
-                if (priceData && typeof priceData === 'object' && 'price' in priceData) {
-                    prices.set(tokenId, parseFloat((priceData as any).price));
+            if (event && event.markets) {
+                const binPrices = new Map<string, number>();
+                for (const market of event.markets) {
+                    try {
+                        const prices = JSON.parse(market.outcomePrices || '[]');
+                        if (prices.length > 0) {
+                            // Use market id as key, store YES price
+                            binPrices.set(market.id, parseFloat(prices[0]));
+                        }
+                    } catch {
+                        // Ignore parse errors
+                    }
+                }
+                if (binPrices.size > 0) {
+                    marketPrices.set(event.id, binPrices);
                 }
             }
+        } catch (error) {
+            Logger.debug(`Failed to fetch prices for ${slug}: ${error}`);
         }
-    } catch (error) {
-        Logger.warning(`Failed to fetch prices: ${error}`);
     }
 
-    return prices;
+    return marketPrices;
 }
 
 /**
  * Refresh prices for all bins in tracked markets
  */
 export async function refreshMarketPrices(markets: WeatherMarket[]): Promise<Map<string, Map<string, number>>> {
-    const allTokenIds: string[] = [];
+    // Collect slugs for all markets
+    const slugs = markets.map(m => m.marketSlug);
 
-    for (const market of markets) {
-        for (const bin of market.bins) {
-            allTokenIds.push(bin.tokenId);
-        }
-    }
+    // Fetch prices from Gamma API
+    const eventPrices = await fetchEventPrices(slugs);
 
-    const prices = await fetchMarketPrices(allTokenIds);
-
-    // Organize by market conditionId -> tokenId -> price
+    // Map prices back to our format (conditionId -> tokenId -> price)
     const marketPrices = new Map<string, Map<string, number>>();
 
     for (const market of markets) {
+        const binPricesFromApi = eventPrices.get(market.conditionId);
         const binPrices = new Map<string, number>();
+
         for (const bin of market.bins) {
-            const price = prices.get(bin.tokenId);
+            // Try to find price by outcomeId (which is the market.id)
+            const price = binPricesFromApi?.get(bin.outcomeId);
             if (price !== undefined) {
                 binPrices.set(bin.tokenId, price);
             }
         }
+
         marketPrices.set(market.conditionId, binPrices);
     }
 

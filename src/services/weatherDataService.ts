@@ -11,6 +11,7 @@ import Logger from '../utils/logger';
 // Cache for forecasts to reduce API calls
 const forecastCache = new Map<string, { forecast: WeatherForecast; cachedAt: Date }>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const dailyCache = new Map<string, { maxTemp: number; minTemp: number }>();
 
 /**
  * Get forecast from NOAA/NWS API
@@ -280,10 +281,80 @@ export function getForecastSigma(leadDays: number): number {
     return getSigmaForLeadDays(leadDays);
 }
 
+/**
+ * Get historical daily data (validation/actuals)
+ */
+export async function getHistoricalDailyData(stationId: string, date: string): Promise<{ maxTemp: number; minTemp: number } | null> {
+    const station = getStation(stationId);
+    if (!station) return null;
+
+    const cacheKey = `${stationId}:${date}`;
+    if (dailyCache.has(cacheKey)) {
+        return dailyCache.get(cacheKey) || null;
+    }
+
+    try {
+        const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${station.lat}&longitude=${station.lon}&start_date=${date}&end_date=${date}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`;
+
+        const response = await axios.get(url, { timeout: 10000 });
+        const daily = response.data.daily;
+
+        if (!daily || !daily.temperature_2m_max || daily.temperature_2m_max.length === 0) {
+            return null;
+        }
+
+        const result = {
+            maxTemp: daily.temperature_2m_max[0],
+            minTemp: daily.temperature_2m_min[0],
+        };
+        dailyCache.set(cacheKey, result);
+        return result;
+    } catch (error) {
+        Logger.warning(`Historical data fetch failed for ${stationId}: ${error}`);
+        return null;
+    }
+}
+
+/**
+ * Simulate a forecast by adding noise to the actual value
+ * Used for backtesting when real historical forecasts are not available
+ */
+export function simulateForecast(
+    actualInfo: { maxTemp: number; minTemp: number },
+    targetDate: string,
+    leadDays: number
+): WeatherForecast {
+    // Get typical error sigma for this lead time
+    const sigma = getForecastSigma(leadDays);
+
+    // Add Gaussian noise (Box-Muller transform)
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    const error = z * sigma;
+
+    // Simulate forecast bias (optional, usually forecasts slightly under-predict extremes)
+    // For now, assume unbiased but noisy
+    const forecastHigh = actualInfo.maxTemp + error;
+    const forecastLow = actualInfo.minTemp + error;
+
+    return {
+        stationId: '',
+        targetDate,
+        forecastHigh: Number(forecastHigh.toFixed(1)),
+        forecastLow: Number(forecastLow.toFixed(1)),
+        source: 'Simulated(Actual+Noise)',
+        retrievedAt: new Date(),
+        leadDays,
+    };
+}
+
 export default {
     getForecast,
     getEnsembleForecast,
     getCurrentObservation,
     getDailyMaxSoFar,
     getForecastSigma,
+    getHistoricalDailyData,
+    simulateForecast,
 };

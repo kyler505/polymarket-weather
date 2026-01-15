@@ -12,6 +12,7 @@ import { updateBotPosition, reduceBotPosition } from '../models/botPositions';
 import Logger from '../utils/logger';
 import { addJitter } from '../utils/rateLimiter';
 import { notifyTrade } from './discordNotifier';
+import { PaperTradingService } from './paperTradingService';
 
 // Executor state
 let isRunning = false;
@@ -28,7 +29,18 @@ async function executeSignal(signal: WeatherTradeSignal): Promise<boolean> {
 
     // Dry run check
     if (ENV.WEATHER_DRY_RUN) {
-        Logger.info(`[DRY RUN] Would ${signal.side} ${signal.bin.label} @ $${signal.marketPrice.toFixed(3)} for $${signal.recommendedSizeUSD.toFixed(2)}`);
+        Logger.info(`[DRY RUN] Simulating trade: ${signal.side} ${signal.bin.label} @ $${signal.marketPrice.toFixed(3)} for $${signal.recommendedSizeUSD.toFixed(2)}`);
+
+        PaperTradingService.getInstance().recordTrade({
+            marketTitle: signal.market.title,
+            outcomeLabel: signal.bin.label,
+            side: signal.side,
+            price: signal.marketPrice,
+            amountUSD: signal.recommendedSizeUSD,
+            conditionId: signal.market.conditionId,
+            assetId: signal.bin.tokenId // Using tokenId as assetId
+        });
+
         return true;
     }
 

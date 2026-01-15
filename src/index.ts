@@ -131,8 +131,12 @@ export const main = async () => {
         Logger.info('Starting Weather Executor...');
         startWeatherExecutor(clobClient);
 
-        // Start position manager (handles SL/TP)
-        startPositionManager();
+        // Start position manager (handles SL/TP) - skip in dry run mode
+        if (!ENV.WEATHER_DRY_RUN) {
+            startPositionManager();
+        } else {
+            Logger.info('Position Manager skipped (dry run mode)');
+        }
 
         // Start redemption service (redeems resolved markets)
         startRedemptionService();

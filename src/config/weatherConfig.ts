@@ -177,9 +177,10 @@ export const findStationByName = (name: string): StationMapping | undefined => {
 
     for (const [, station] of STATION_MAPPINGS) {
         if (
-            normalizedName.includes(station.name.toLowerCase()) ||
-            normalizedName.includes(station.city.toLowerCase()) ||
-            normalizedName.includes(station.id.toLowerCase())
+            station.name.toLowerCase().includes(normalizedName) ||
+            station.city.toLowerCase().includes(normalizedName) ||
+            station.id.toLowerCase().includes(normalizedName) ||
+            station.region.toLowerCase().includes(normalizedName)
         ) {
             return station;
         }

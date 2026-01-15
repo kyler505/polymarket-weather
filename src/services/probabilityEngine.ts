@@ -230,7 +230,7 @@ export function getExpectedValue(
 export function kellyFraction(
     fairProbability: number,
     marketPrice: number,
-    maxFraction: number = 0.25 // Cap at 25% of capital
+    maxFraction: number = 0.05 // Conservative default (5% of capital) for production safety
 ): number {
     if (fairProbability <= 0 || fairProbability >= 1) return 0;
     if (marketPrice <= 0 || marketPrice >= 1) return 0;

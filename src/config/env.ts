@@ -120,7 +120,7 @@ export const ENV = {
     // Forecast refresh interval (ms)
     WEATHER_FORECAST_REFRESH_MS: parseInt(process.env.WEATHER_FORECAST_REFRESH_MS || '1800000', 10), // 30 min
     // Dry run mode - compute probabilities but don't execute trades
-    WEATHER_DRY_RUN: process.env.WEATHER_DRY_RUN === 'true',
+
     // Minimum parser confidence to trade a market (0-1)
     WEATHER_MIN_PARSER_CONFIDENCE: parseFloat(process.env.WEATHER_MIN_PARSER_CONFIDENCE || '0.8'),
 
@@ -148,6 +148,7 @@ export const ENV = {
     RETRY_DELAY_BASE_MS: parseInt(process.env.RETRY_DELAY_BASE_MS || '2000', 10),
     RETRY_DELAY_MAX_MS: parseInt(process.env.RETRY_DELAY_MAX_MS || '30000', 10),
     RATE_LIMIT_COOLDOWN_MS: parseInt(process.env.RATE_LIMIT_COOLDOWN_MS || '60000', 10),
+    WEATHER_DRY_RUN: process.env.WEATHER_DRY_RUN === 'true',
     EXECUTOR_POLL_INTERVAL_MS: parseInt(process.env.EXECUTOR_POLL_INTERVAL_MS || '5000', 10),
     MONITOR_POLL_JITTER_MS: parseInt(process.env.MONITOR_POLL_JITTER_MS || '500', 10),
 

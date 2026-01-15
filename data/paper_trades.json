@@ -1,0 +1,32 @@
+{
+  "balance": 1050,
+  "positions": {
+    "test-asset-1": 0
+  },
+  "trades": [
+    {
+      "marketTitle": "Will NYC be > 50F on Jan 1?",
+      "outcomeLabel": ">50F",
+      "side": "BUY",
+      "price": 0.4,
+      "amountUSD": 100,
+      "conditionId": "test-condition-1",
+      "assetId": "test-asset-1",
+      "id": "t9ca2q",
+      "timestamp": "2026-01-15T18:25:30.136Z",
+      "shares": 250
+    },
+    {
+      "marketTitle": "Will NYC be > 50F on Jan 1?",
+      "outcomeLabel": ">50F",
+      "side": "SELL",
+      "price": 0.6,
+      "amountUSD": 150,
+      "conditionId": "test-condition-1",
+      "assetId": "test-asset-1",
+      "id": "wf59m",
+      "timestamp": "2026-01-15T18:25:30.141Z",
+      "shares": 250
+    }
+  ]
+}
