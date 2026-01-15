@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import * as readline from 'readline';
+import { ENV } from '../config/env';
 
 // Colors for console output
 const colors = {
@@ -105,10 +106,41 @@ async function runBatch(configs: SimulationConfig[]): Promise<void> {
 
     console.log(colors.yellow(`Total simulations to run: ${configs.length}\n`));
 
+    const results: any[] = [];
+    const fs = await import('fs');
+    const path = await import('path');
+
     for (let i = 0; i < configs.length; i++) {
         console.log(colors.bold(`\n[${i + 1}/${configs.length}] Running simulation...`));
         try {
             await runSimulation(configs[i]);
+
+            // Find and read the most recent result file for this config
+            const resultsDir = path.join(process.cwd(), 'simulation_results');
+            if (fs.existsSync(resultsDir)) {
+                const files = fs.readdirSync(resultsDir)
+                    .filter((f: string) => f.includes(configs[i].traderAddress.slice(0, 10)))
+                    .sort()
+                    .reverse();
+
+                if (files.length > 0) {
+                    const latestFile = path.join(resultsDir, files[0]);
+                    try {
+                        const data = JSON.parse(fs.readFileSync(latestFile, 'utf-8'));
+                        results.push({
+                            trader: configs[i].traderAddress,
+                            days: configs[i].historyDays,
+                            multiplier: configs[i].multiplier,
+                            roi: data.roi || data.performance?.roi || 0,
+                            totalPnl: data.totalPnl || data.performance?.totalPnl || 0,
+                            copiedTrades: data.copiedTrades || data.trades?.copied || 0,
+                            openPositions: data.openPositions?.length || 0,
+                        });
+                    } catch (e) {
+                        // Skip if can't parse
+                    }
+                }
+            }
         } catch (error) {
             console.log(colors.red(`Simulation ${i + 1} failed, continuing with next...\n`));
         }
@@ -117,6 +149,35 @@ async function runBatch(configs: SimulationConfig[]): Promise<void> {
         if (i < configs.length - 1) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
         }
+    }
+
+    // Compile summary
+    if (results.length > 0) {
+        const summaryDir = path.join(process.cwd(), 'simulation_results');
+        const dateStr = new Date().toISOString().split('T')[0];
+        const summaryFile = path.join(summaryDir, `batch_summary_${dateStr}.json`);
+
+        const summary = {
+            runDate: new Date().toISOString(),
+            totalSimulations: configs.length,
+            successfulSimulations: results.length,
+            results: results.sort((a, b) => b.roi - a.roi), // Sort by ROI descending
+            bestPerformer: results.reduce((best, curr) => curr.roi > best.roi ? curr : best, results[0]),
+        };
+
+        fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
+
+        console.log(colors.bold(colors.cyan('\n📊 BATCH SUMMARY')));
+        console.log(colors.cyan('════════════════════════════════════════════════════════════════\n'));
+
+        console.log(colors.yellow('Top Results by ROI:\n'));
+        results.sort((a, b) => b.roi - a.roi).slice(0, 5).forEach((r, i) => {
+            const roiColor = r.roi >= 0 ? colors.green : colors.red;
+            console.log(`  ${i + 1}. ${r.trader.slice(0, 10)}... (${r.multiplier}x, ${r.days}d)`);
+            console.log(`     ROI: ${roiColor(r.roi >= 0 ? '+' : '')}${roiColor(r.roi.toFixed(2) + '%')}  P&L: $${r.totalPnl.toFixed(2)}`);
+        });
+
+        console.log(colors.gray(`\n✓ Summary saved to: ${summaryFile}\n`));
     }
 
     console.log(
@@ -190,15 +251,29 @@ async function interactiveMode() {
     const preset = presetMap[presetChoice.trim()] || 'standard';
 
     // Select traders
-    console.log(colors.yellow('\nTrader addresses (leave empty for defaults):'));
-    console.log(colors.gray('  Default: 0x7c3d... and 0x6bab...\n'));
+    console.log(colors.yellow('\nTrader addresses:'));
+    console.log('  1. Use Defaults');
+    console.log('  2. Use Traders from .env (USER_ADDRESSES)');
+    console.log('  3. Enter Manually');
 
-    const tradersInput = await question(
-        colors.cyan('Enter addresses (comma-separated) or press Enter: ')
-    );
-    const traders = tradersInput.trim()
-        ? tradersInput.split(',').map((t) => t.trim().toLowerCase())
-        : undefined;
+    const traderSourceIndex = await question(colors.cyan('\nEnter choice (1-3): '));
+    let traders: string[] | undefined;
+
+    if (traderSourceIndex === '2') {
+         if (ENV.USER_ADDRESSES && ENV.USER_ADDRESSES.length > 0) {
+             traders = ENV.USER_ADDRESSES;
+             console.log(colors.green(`\nLoaded ${traders.length} traders from .env`));
+         } else {
+             console.log(colors.red('\nNo traders found in .env, falling back to defaults.'));
+         }
+    } else if (traderSourceIndex === '3') {
+         const tradersInput = await question(
+            colors.cyan('Enter addresses (comma-separated): ')
+        );
+        traders = tradersInput.trim()
+            ? tradersInput.split(',').map((t) => t.trim().toLowerCase())
+            : undefined;
+    }
 
     rl.close();
 
