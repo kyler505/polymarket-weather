@@ -218,6 +218,14 @@ export const shouldCopyTrade = (
     walletAddress: string,
     myPositions: UserPositionInterface[]
 ): FilterResult => {
+    // 0. Check for invalid/missing price (distinguish from actual 0 price)
+    if (trade.price === null || trade.price === undefined || isNaN(trade.price)) {
+        return {
+            copy: false,
+            reason: `Invalid price (${trade.price}) - data missing from API`
+        };
+    }
+
     // 1. Price band filter
     if (!isPriceInBand(trade.price)) {
         return {

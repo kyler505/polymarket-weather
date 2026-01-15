@@ -113,7 +113,14 @@ export const executeBuyOrder = async ({
         return { success: true, totalBought: 0, abortedDueToFunds: false, retryLimitReached: false };
     }
 
-    // Final check against minimum order size (after dynamic multiplier)
+    // Smart round-up: if order is at least 50% of minimum, round up instead of skipping
+    // This helps execute near-miss orders while avoiding truly tiny orders
+    if (finalAmount > 0 && finalAmount < MIN_ORDER_SIZE_USD && finalAmount >= MIN_ORDER_SIZE_USD * 0.5) {
+        Logger.info(`📈 Rounding up $${finalAmount.toFixed(2)} to minimum $${MIN_ORDER_SIZE_USD}`);
+        finalAmount = MIN_ORDER_SIZE_USD;
+    }
+
+    // Final check against minimum order size (after dynamic multiplier and round-up)
     if (finalAmount < MIN_ORDER_SIZE_USD) {
         Logger.warning(`❌ Adjusted size $${finalAmount.toFixed(2)} below minimum $${MIN_ORDER_SIZE_USD}`);
         await UserActivity.updateOne({ _id: trade._id }, { bot: true });

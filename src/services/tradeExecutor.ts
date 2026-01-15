@@ -48,6 +48,10 @@ const tradeAggregationBuffer: Map<string, AggregatedTrade> = new Map();
 const recentlyCopiedTrades: Map<string, { timestamp: number; userAddress: string }> = new Map();
 const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
+// Transaction hash deduplication: prevents processing same trade twice across poll cycles
+const processedTxHashes: Set<string> = new Set();
+const TX_HASH_RETENTION_COUNT = 1000; // Keep last N hashes to prevent memory growth
+
 const readTempTrades = async (): Promise<TradeWithUser[]> => {
     const allTrades: TradeWithUser[] = [];
 
@@ -156,6 +160,12 @@ const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
         const UserActivity = getUserActivityModel(trade.userAddress);
         const now = Date.now();
 
+        // Transaction hash deduplication (most reliable - tx hashes are unique)
+        if (trade.transactionHash && processedTxHashes.has(trade.transactionHash)) {
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true });
+            continue; // Silently skip - don't log to avoid spam
+        }
+
         // Fetch my positions for filter checks (needed for theme cap)
         const my_positions: UserPositionInterface[] = await fetchData(
             `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
@@ -187,6 +197,16 @@ const doTrading = async (clobClient: ClobClient, trades: TradeWithUser[]) => {
 
         // Record copied market for per-wallet dedup filter
         recordCopiedMarket(trade.conditionId, trade.userAddress);
+
+        // Record tx hash to prevent duplicate processing
+        if (trade.transactionHash) {
+            processedTxHashes.add(trade.transactionHash);
+            // Limit set size to prevent memory growth
+            if (processedTxHashes.size > TX_HASH_RETENTION_COUNT) {
+                const firstHash = processedTxHashes.values().next().value;
+                if (firstHash) processedTxHashes.delete(firstHash);
+            }
+        }
 
         Logger.trade(trade.userAddress, trade.side || 'UNKNOWN', {
             asset: trade.asset,
