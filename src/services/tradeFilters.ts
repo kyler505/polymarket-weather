@@ -6,6 +6,13 @@
 import { ENV } from '../config/env';
 import { UserActivityInterface, UserPositionInterface } from '../interfaces/User';
 import Logger from '../utils/logger';
+import {
+    saveState,
+    loadState,
+    STATE_KEYS,
+    serializeMapOfSets,
+    deserializeMapOfSets,
+} from '../utils/statePersistence';
 
 // ============================================================================
 // CONFIGURATION
@@ -24,14 +31,62 @@ const THEME_CAP_ENABLED = ENV.FILTER_THEME_CAP_ENABLED ?? true;
 const THEME_CAP_PERCENT = ENV.FILTER_THEME_CAP_PERCENT ?? 30;
 
 // ============================================================================
-// STATE TRACKING
+// STATE TRACKING (persisted to MongoDB)
 // ============================================================================
 
-// Track copied markets per wallet: Key = "walletAddress:conditionId"
-const copiedMarketsPerWallet: Map<string, Set<string>> = new Map();
+// Track copied markets per wallet: Key = walletAddress, Value = Set of conditionIds
+let copiedMarketsPerWallet: Map<string, Set<string>> = new Map();
+let stateLoaded = false;
 
-// Bitcoin-related keywords for theme detection
-const BITCOIN_KEYWORDS = ['btc', 'bitcoin'];
+// Category keywords for theme detection
+const CATEGORY_KEYWORDS: Record<string, string[]> = {
+    bitcoin: ['btc', 'bitcoin'],
+    crypto: ['eth', 'ethereum', 'sol', 'solana', 'crypto', 'xrp', 'doge', 'coin'],
+    politics: ['trump', 'biden', 'election', 'congress', 'senate', 'republican', 'democrat', 'president', 'governor'],
+    sports: ['nfl', 'nba', 'mlb', 'soccer', 'football', 'basketball', 'tennis', 'golf'],
+};
+
+// ============================================================================
+// STATE PERSISTENCE
+// ============================================================================
+
+/**
+ * Load persisted state from MongoDB
+ */
+export const loadFilterState = async (): Promise<void> => {
+    if (stateLoaded) return;
+
+    try {
+        const saved = await loadState<Record<string, string[]> | null>(
+            STATE_KEYS.COPIED_MARKETS,
+            null
+        );
+        if (saved) {
+            copiedMarketsPerWallet = deserializeMapOfSets(saved);
+            Logger.info(`📋 Loaded ${copiedMarketsPerWallet.size} wallet filter states from DB`);
+        }
+        stateLoaded = true;
+    } catch (error) {
+        Logger.warning(`Failed to load filter state: ${error}`);
+    }
+};
+
+/**
+ * Save current state to MongoDB (debounced)
+ */
+let saveTimeout: NodeJS.Timeout | null = null;
+const saveFilterState = (): void => {
+    // Debounce saves to avoid excessive writes
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(async () => {
+        try {
+            const serialized = serializeMapOfSets(copiedMarketsPerWallet);
+            await saveState(STATE_KEYS.COPIED_MARKETS, serialized);
+        } catch (error) {
+            Logger.warning(`Failed to save filter state: ${error}`);
+        }
+    }, 5000); // Save after 5 seconds of no changes
+};
 
 // ============================================================================
 // FILTER FUNCTIONS
@@ -67,14 +122,41 @@ export const recordCopiedMarket = (conditionId: string, walletAddress: string): 
         copiedMarketsPerWallet.set(walletAddress, walletMarkets);
     }
     walletMarkets.add(conditionId);
+
+    // Trigger async save
+    saveFilterState();
+};
+
+/**
+ * Detect if a trade matches a specific category based on slug/eventSlug
+ */
+export const matchesCategory = (category: string, slug?: string, eventSlug?: string): boolean => {
+    const keywords = CATEGORY_KEYWORDS[category.toLowerCase()];
+    if (!keywords) return false;
+
+    const text = `${slug || ''} ${eventSlug || ''}`.toLowerCase();
+    return keywords.some(keyword => text.includes(keyword));
 };
 
 /**
  * Detect if a trade is Bitcoin-related based on slug/eventSlug
  */
 export const isBitcoinRelated = (slug?: string, eventSlug?: string): boolean => {
-    const text = `${slug || ''} ${eventSlug || ''}`.toLowerCase();
-    return BITCOIN_KEYWORDS.some(keyword => text.includes(keyword));
+    return matchesCategory('bitcoin', slug, eventSlug);
+};
+
+/**
+ * Detect if a trade is crypto-related (broader than just Bitcoin)
+ */
+export const isCryptoRelated = (slug?: string, eventSlug?: string): boolean => {
+    return matchesCategory('bitcoin', slug, eventSlug) || matchesCategory('crypto', slug, eventSlug);
+};
+
+/**
+ * Detect if a trade is politics-related
+ */
+export const isPoliticsRelated = (slug?: string, eventSlug?: string): boolean => {
+    return matchesCategory('politics', slug, eventSlug);
 };
 
 /**
@@ -106,16 +188,16 @@ export const isBelowThemeCap = (
 ): { allowed: boolean; currentExposure: number } => {
     if (!THEME_CAP_ENABLED) return { allowed: true, currentExposure: 0 };
 
-    // Currently only checking Bitcoin concentration
-    if (!isBitcoinRelated(slug, eventSlug)) {
-        return { allowed: true, currentExposure: 0 };
+    // Check crypto concentration (includes Bitcoin)
+    if (isCryptoRelated(slug, eventSlug)) {
+        const currentExposure = calculateThemeExposure(positions, isCryptoRelated);
+        return {
+            allowed: currentExposure < THEME_CAP_PERCENT,
+            currentExposure
+        };
     }
 
-    const currentExposure = calculateThemeExposure(positions, isBitcoinRelated);
-    return {
-        allowed: currentExposure < THEME_CAP_PERCENT,
-        currentExposure
-    };
+    return { allowed: true, currentExposure: 0 };
 };
 
 // ============================================================================
@@ -152,12 +234,12 @@ export const shouldCopyTrade = (
         };
     }
 
-    // 3. Theme/category cap (Bitcoin concentration)
+    // 3. Theme/category cap (crypto concentration)
     const themeCheck = isBelowThemeCap(trade.slug, trade.eventSlug, myPositions);
     if (!themeCheck.allowed) {
         return {
             copy: false,
-            reason: `BTC exposure ${themeCheck.currentExposure.toFixed(0)}% exceeds ${THEME_CAP_PERCENT}% cap`
+            reason: `Crypto exposure ${themeCheck.currentExposure.toFixed(0)}% exceeds ${THEME_CAP_PERCENT}% cap`
         };
     }
 

@@ -32,12 +32,59 @@ interface PositionWithPeak extends Position {
     peakPnlPercent: number; // Peak P&L percentage
 }
 
-// In-memory tracking for trailing stops
-const positionPeaks: Map<string, { peakPrice: number; peakPnlPercent: number }> = new Map();
+// In-memory tracking for trailing stops (persisted to MongoDB)
+let positionPeaks: Map<string, { peakPrice: number; peakPnlPercent: number }> = new Map();
+let peaksLoaded = false;
+
+// Import state persistence
+import {
+    saveState,
+    loadState,
+    STATE_KEYS,
+    serializeMap,
+    deserializeMap,
+} from '../utils/statePersistence';
 
 let isRunning = false;
 let timeoutId: NodeJS.Timeout | null = null;
 let clobClientInstance: ClobClient | null = null;
+
+/**
+ * Load persisted peak state from MongoDB
+ */
+const loadPeakState = async (): Promise<void> => {
+    if (peaksLoaded) return;
+
+    try {
+        const saved = await loadState<Record<string, { peakPrice: number; peakPnlPercent: number }> | null>(
+            STATE_KEYS.POSITION_PEAKS,
+            null
+        );
+        if (saved) {
+            positionPeaks = deserializeMap(saved);
+            Logger.info(`📈 Loaded ${positionPeaks.size} trailing stop peaks from DB`);
+        }
+        peaksLoaded = true;
+    } catch (error) {
+        Logger.warning(`Failed to load peak state: ${error}`);
+    }
+};
+
+/**
+ * Save peak state to MongoDB (debounced)
+ */
+let peakSaveTimeout: NodeJS.Timeout | null = null;
+const savePeakState = (): void => {
+    if (peakSaveTimeout) clearTimeout(peakSaveTimeout);
+    peakSaveTimeout = setTimeout(async () => {
+        try {
+            const serialized = serializeMap(positionPeaks);
+            await saveState(STATE_KEYS.POSITION_PEAKS, serialized);
+        } catch (error) {
+            Logger.warning(`Failed to save peak state: ${error}`);
+        }
+    }, 5000);
+};
 
 /**
  * Load current positions from Polymarket API
@@ -74,6 +121,7 @@ const updatePeakTracking = (position: Position): PositionWithPeak => {
             peakPrice: position.curPrice,
             peakPnlPercent: Math.max(currentPnlPercent, existing?.peakPnlPercent || 0),
         });
+        savePeakState(); // Persist on update
     }
 
     const peaks = positionPeaks.get(key)!;
@@ -243,19 +291,22 @@ export const startPositionManager = (): void => {
     Logger.info(`   Trailing Stop: ${ENV.TRAILING_STOP_ENABLED ? `${ENV.TRAILING_STOP_PERCENT}%` : 'DISABLED'}`);
     Logger.info(`   Check Interval: ${(ENV.POSITION_CHECK_INTERVAL_MS / 1000).toFixed(0)}s`);
 
-    // Run immediately
-    checkPositions();
+    // Load persisted peak state before first check
+    loadPeakState().then(() => {
+        // Run immediately
+        checkPositions();
 
-    // Then schedule recurring checks
-    const runLoop = async () => {
-        if (!isRunning) return;
-        timeoutId = setTimeout(async () => {
-            await checkPositions();
-            runLoop();
-        }, ENV.POSITION_CHECK_INTERVAL_MS);
-    };
+        // Then schedule recurring checks
+        const runLoop = async () => {
+            if (!isRunning) return;
+            timeoutId = setTimeout(async () => {
+                await checkPositions();
+                runLoop();
+            }, ENV.POSITION_CHECK_INTERVAL_MS);
+        };
 
-    runLoop();
+        runLoop();
+    });
 };
 
 /**
