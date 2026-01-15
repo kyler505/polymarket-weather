@@ -10,7 +10,7 @@ import Logger from '../logger';
 import refreshPolymarketCache from '../refreshPolymarketCache';
 import { analyzeOrderBook } from '../marketAnalysis';
 import { getBaseSlippageTolerance, calculateDynamicSlippage, isPriceAcceptable } from '../slippageCalculator';
-import { ENV } from '../../config/env';
+import { ENV, getMultiplierForTrader } from '../../config/env';
 import { calculateOrderSize } from '../../config/copyStrategy';
 import { MIN_ORDER_SIZE_USD, getBestAsk, waitForRetry } from './orderHelpers';
 import { extractOrderError, isInsufficientBalanceOrAllowanceError, isRateLimitError } from './orderErrors';
@@ -72,12 +72,16 @@ export const executeBuyOrder = async ({
     // Get current position size for position limit checks
     const currentPositionValue = myPosition ? myPosition.size * myPosition.avgPrice : 0;
 
-    // Use copy strategy system
+    // Get per-trader multiplier (if configured)
+    const traderMultiplier = getMultiplierForTrader(userAddress);
+
+    // Use copy strategy system with per-trader multiplier
     const orderCalc = calculateOrderSize(
         COPY_STRATEGY_CONFIG,
         trade.usdcSize,
         myBalance,
-        currentPositionValue
+        currentPositionValue,
+        traderMultiplier !== ENV.TRADE_MULTIPLIER ? traderMultiplier : undefined
     );
 
     let finalAmount = orderCalc.finalAmount;

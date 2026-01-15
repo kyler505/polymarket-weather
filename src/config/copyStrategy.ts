@@ -70,12 +70,18 @@ export interface OrderSizeCalculation {
 
 /**
  * Calculate order size based on copy strategy
+ * @param config - Copy strategy configuration
+ * @param traderOrderSize - Size of the trader's order in USD
+ * @param availableBalance - Your available balance in USD
+ * @param currentPositionSize - Current position size (for position limits)
+ * @param traderMultiplierOverride - Optional per-trader multiplier (overrides config multiplier)
  */
 export function calculateOrderSize(
     config: CopyStrategyConfig,
     traderOrderSize: number,
     availableBalance: number,
-    currentPositionSize: number = 0
+    currentPositionSize: number = 0,
+    traderMultiplierOverride?: number
 ): OrderSizeCalculation {
     let baseAmount: number;
     let reasoning: string;
@@ -107,12 +113,15 @@ export function calculateOrderSize(
             throw new Error(`Unknown strategy: ${config.strategy}`);
     }
 
-    // Step 1.5: Apply tiered or single multiplier based on trader's order size
-    const multiplier = getTradeMultiplier(config, traderOrderSize);
+    // Step 1.5: Apply multiplier (per-trader override takes priority, then config multiplier)
+    const multiplier = traderMultiplierOverride !== undefined
+        ? traderMultiplierOverride
+        : getTradeMultiplier(config, traderOrderSize);
     let finalAmount = baseAmount * multiplier;
 
     if (multiplier !== 1.0) {
-        reasoning += ` → ${multiplier}x multiplier: $${baseAmount.toFixed(2)} → $${finalAmount.toFixed(2)}`;
+        const multiplierSource = traderMultiplierOverride !== undefined ? 'per-trader' : 'config';
+        reasoning += ` → ${multiplier}x ${multiplierSource} multiplier: $${baseAmount.toFixed(2)} → $${finalAmount.toFixed(2)}`;
     }
     let cappedByMax = false;
     let reducedByBalance = false;

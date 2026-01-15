@@ -298,6 +298,69 @@ const parseUserAddresses = (input: string): string[] => {
     return addresses;
 };
 
+/**
+ * Parse per-trader multipliers from TRADER_MULTIPLIERS env variable
+ * Format: comma-separated multipliers matching USER_ADDRESSES order
+ * Example: USER_ADDRESSES="0xabc...,0xdef..." TRADER_MULTIPLIERS="2.0,1.0"
+ *
+ * @returns Map of trader address (lowercase) to multiplier
+ */
+const parseTraderMultipliers = (
+    multipliersStr: string | undefined,
+    addresses: string[]
+): Map<string, number> => {
+    const multiplierMap = new Map<string, number>();
+
+    if (!multipliersStr || multipliersStr.trim() === '') {
+        // No per-trader multipliers configured, use global TRADE_MULTIPLIER
+        return multiplierMap;
+    }
+
+    const multipliers = multipliersStr
+        .split(',')
+        .map(m => m.trim())
+        .filter(m => m.length > 0);
+
+    if (multipliers.length !== addresses.length) {
+        console.warn(`⚠️  TRADER_MULTIPLIERS count (${multipliers.length}) doesn't match USER_ADDRESSES count (${addresses.length})`);
+        console.warn('   Falling back to global TRADE_MULTIPLIER for unmatched traders');
+    }
+
+    for (let i = 0; i < Math.min(multipliers.length, addresses.length); i++) {
+        const multiplier = parseFloat(multipliers[i]);
+        if (isNaN(multiplier) || multiplier <= 0) {
+            console.warn(`⚠️  Invalid multiplier "${multipliers[i]}" for trader ${addresses[i].slice(0, 10)}...`);
+            continue;
+        }
+        multiplierMap.set(addresses[i].toLowerCase(), multiplier);
+    }
+
+    if (multiplierMap.size > 0) {
+        console.log(`✓ Loaded per-trader multipliers for ${multiplierMap.size} traders:`);
+        for (const [addr, mult] of multiplierMap) {
+            console.log(`   ${addr.slice(0, 10)}... → ${mult}x`);
+        }
+    }
+
+    return multiplierMap;
+};
+
+/**
+ * Get the multiplier for a specific trader address
+ * Falls back to global TRADE_MULTIPLIER if not configured per-trader
+ */
+export const getMultiplierForTrader = (traderAddress: string): number => {
+    const addr = traderAddress.toLowerCase();
+    const perTraderMultiplier = ENV.TRADER_MULTIPLIERS.get(addr);
+
+    if (perTraderMultiplier !== undefined) {
+        return perTraderMultiplier;
+    }
+
+    // Fall back to global multiplier
+    return ENV.TRADE_MULTIPLIER;
+};
+
 // Parse copy strategy configuration
 const parseCopyStrategy = (): CopyStrategyConfig => {
     // Support legacy COPY_PERCENTAGE + TRADE_MULTIPLIER for backward compatibility
@@ -401,6 +464,11 @@ export const ENV = {
     // Legacy parameters (kept for backward compatibility)
     TRADE_MULTIPLIER: parseFloat(process.env.TRADE_MULTIPLIER || '1.0'),
     COPY_PERCENTAGE: parseFloat(process.env.COPY_PERCENTAGE || '10.0'),
+    // Per-trader multipliers (optional - overrides TRADE_MULTIPLIER for specific traders)
+    TRADER_MULTIPLIERS: parseTraderMultipliers(
+        process.env.TRADER_MULTIPLIERS,
+        parseUserAddresses(process.env.USER_ADDRESSES as string)
+    ),
     // New copy strategy configuration
     COPY_STRATEGY_CONFIG: parseCopyStrategy(),
     // Network settings
