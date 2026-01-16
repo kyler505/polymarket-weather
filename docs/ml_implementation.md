@@ -34,3 +34,12 @@ Optional tuning:
 ## Notes
 - If training data is insufficient, the bot falls back to the ensemble forecast.  
 - The ML model runs per station/date and is cached to reduce overhead.  
+
+## Optimization
+You can grid-search hybrid ML parameters with multiple seeds:
+
+- `npm run optimize-hybrid -- --city=NYC --days=60 --seeds=5 --kelly=0.05 --edge=0.12`
+
+Optional tuning flags:
+- `--max-configs=200` (limits grid size)
+- `--write-env=hybrid-ml-best.env` (writes recommended env snippet)
