@@ -312,7 +312,7 @@ async function testProbabilityEngine(): Promise<void> {
             continue;
         }
 
-        const sigma = getForecastSigma(forecast.leadDays);
+        const sigma = forecast.sigmaHigh ?? getForecastSigma(forecast.leadDays);
         console.log(chalk.gray(`   Forecast: ${forecast.forecastHigh?.toFixed(1)}°F high | Lead: ${forecast.leadDays} days | σ: ${sigma.toFixed(1)}°F`));
 
         // Compute probabilities

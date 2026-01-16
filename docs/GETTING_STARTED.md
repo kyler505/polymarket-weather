@@ -11,6 +11,7 @@ Before you begin, ensure you have:
 3. **MongoDB** database (local or cloud like MongoDB Atlas)
 4. **Funded Polymarket wallet** with USDC
 5. **Polygon RPC endpoint** (Infura, Alchemy, or similar)
+6. **Python 3** (optional, required only for hybrid ML forecasts)
 
 ## Quick Setup
 

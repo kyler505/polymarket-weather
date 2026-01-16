@@ -93,6 +93,14 @@ export interface WeatherForecast {
     forecastLow?: number;
     /** Forecast source (e.g., "NOAA", "Open-Meteo") */
     source: string;
+    /** Optional uncertainty for high temperature forecast */
+    sigmaHigh?: number;
+    /** Optional uncertainty for low temperature forecast */
+    sigmaLow?: number;
+    /** Optional model identifier */
+    model?: string;
+    /** Optional model details */
+    modelInfo?: Record<string, unknown>;
     /** When the forecast was retrieved */
     retrievedAt: Date;
     /** Days until the target date (lead time) */

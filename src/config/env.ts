@@ -124,6 +124,22 @@ export const ENV = {
     // Minimum parser confidence to trade a market (0-1)
     WEATHER_MIN_PARSER_CONFIDENCE: parseFloat(process.env.WEATHER_MIN_PARSER_CONFIDENCE || '0.8'),
 
+    // === Hybrid ML Forecast Settings ===
+    WEATHER_ML_ENABLED: process.env.WEATHER_ML_ENABLED === 'true',
+    WEATHER_ML_LOOKBACK_DAYS: parseInt(process.env.WEATHER_ML_LOOKBACK_DAYS || '60', 10),
+    WEATHER_ML_MIN_SAMPLES: parseInt(process.env.WEATHER_ML_MIN_SAMPLES || '25', 10),
+    WEATHER_ML_ALLOW_SIMULATED_TRAINING: process.env.WEATHER_ML_ALLOW_SIMULATED_TRAINING === 'true',
+    WEATHER_ML_PYTHON_PATH: process.env.WEATHER_ML_PYTHON_PATH || 'python3',
+    WEATHER_ML_TIMEOUT_MS: parseInt(process.env.WEATHER_ML_TIMEOUT_MS || '15000', 10),
+    WEATHER_ML_CACHE_TTL_MS: parseInt(process.env.WEATHER_ML_CACHE_TTL_MS || '900000', 10), // 15 min
+    WEATHER_ML_TRAINING_CACHE_TTL_MS: parseInt(process.env.WEATHER_ML_TRAINING_CACHE_TTL_MS || '21600000', 10), // 6 hours
+    WEATHER_ML_RIDGE_ALPHA: parseFloat(process.env.WEATHER_ML_RIDGE_ALPHA || '1.0'),
+    WEATHER_ML_KNN_K: parseInt(process.env.WEATHER_ML_KNN_K || '7', 10),
+    WEATHER_ML_CALIBRATION_SPLIT: parseFloat(process.env.WEATHER_ML_CALIBRATION_SPLIT || '0.2'),
+    WEATHER_ML_CLIP_DELTA: parseFloat(process.env.WEATHER_ML_CLIP_DELTA || '12'),
+    WEATHER_ML_SIGMA_FLOOR: parseFloat(process.env.WEATHER_ML_SIGMA_FLOOR || '1.5'),
+    WEATHER_ML_SEED: parseInt(process.env.WEATHER_ML_SEED || '42', 10),
+
     // === Risk Management Settings ===
     // Maximum exposure per market (USD)
     MAX_EXPOSURE_PER_MARKET_USD: parseFloat(process.env.MAX_EXPOSURE_PER_MARKET_USD || '50'),
