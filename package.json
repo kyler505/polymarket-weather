@@ -29,7 +29,8 @@
         "lint": "eslint .",
         "lint:fix": "eslint --fix .",
         "format": "prettier --write .",
-        "simulate": "node dist/scripts/simulateHistorical.js"
+        "simulate": "node dist/scripts/simulateHistorical.js",
+        "optimize": "node dist/scripts/optimizeStrategy.js"
     },
     "keywords": [
         "polymarket",
