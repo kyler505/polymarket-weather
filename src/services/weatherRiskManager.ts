@@ -11,12 +11,23 @@ interface ExposureTracker {
     perMarket: Map<string, number>;      // conditionId -> USD exposure
     perRegion: Map<string, number>;      // region -> USD exposure
     perDate: Map<string, number>;        // targetDate -> USD exposure
-    dailyPnL: number;                     // Running P&L for the day
+    dailyPnL: number;                     // Running REALIZED P&L for the day
     lastPnLReset: Date;                   // When daily P&L was last reset
     lastDataUpdate: Date;                 // When we last got fresh data
     isPaused: boolean;                    // Kill-switch flag
     pauseReason: string | null;
 }
+
+// Track open positions for mark-to-market calculations
+interface OpenPosition {
+    conditionId: string;
+    tokenId: string;
+    entryPrice: number;
+    shares: number;
+    costBasis: number;
+}
+
+const openPositions: Map<string, OpenPosition> = new Map(); // tokenId -> position
 
 const exposure: ExposureTracker = {
     perMarket: new Map(),
@@ -150,12 +161,107 @@ export function recordPnL(pnlUSD: number): void {
     maybeResetDailyPnL();
     exposure.dailyPnL += pnlUSD;
 
-    // Check daily loss limit
+    // Check daily loss limit (realized only - see checkDailyStopWithMTM for full check)
     if (exposure.dailyPnL < -ENV.MAX_DAILY_LOSS_USD) {
         exposure.isPaused = true;
         exposure.pauseReason = 'Daily loss limit reached';
         Logger.warning(`🛑 Trading paused: Daily loss $${Math.abs(exposure.dailyPnL).toFixed(2)} exceeds limit $${ENV.MAX_DAILY_LOSS_USD}`);
     }
+}
+
+/**
+ * Record an open position for MTM tracking
+ */
+export function recordOpenPosition(
+    conditionId: string,
+    tokenId: string,
+    entryPrice: number,
+    shares: number,
+    costBasis: number
+): void {
+    const existing = openPositions.get(tokenId);
+    if (existing) {
+        // Average into existing position
+        const totalShares = existing.shares + shares;
+        const totalCost = existing.costBasis + costBasis;
+        existing.shares = totalShares;
+        existing.costBasis = totalCost;
+        existing.entryPrice = totalCost / totalShares;
+    } else {
+        openPositions.set(tokenId, {
+            conditionId,
+            tokenId,
+            entryPrice,
+            shares,
+            costBasis
+        });
+    }
+    Logger.debug(`📊 Opened position: ${tokenId} | ${shares.toFixed(2)} shares @ ${entryPrice.toFixed(3)}`);
+}
+
+/**
+ * Close a position (remove from MTM tracking)
+ */
+export function closePosition(tokenId: string): OpenPosition | null {
+    const position = openPositions.get(tokenId);
+    if (position) {
+        openPositions.delete(tokenId);
+        Logger.debug(`📊 Closed position: ${tokenId}`);
+    }
+    return position || null;
+}
+
+/**
+ * Compute unrealized P&L given current market prices
+ */
+export function computeUnrealizedPnL(currentPrices: Map<string, number>): number {
+    let unrealizedPnL = 0;
+
+    for (const [tokenId, position] of openPositions) {
+        const currentPrice = currentPrices.get(tokenId);
+        if (currentPrice !== undefined) {
+            // MTM value = shares * currentPrice
+            // Unrealized PnL = MTM value - cost basis
+            const mtmValue = position.shares * currentPrice;
+            const positionPnL = mtmValue - position.costBasis;
+            unrealizedPnL += positionPnL;
+        }
+        // If no current price, assume neutral (0 unrealized)
+    }
+
+    return unrealizedPnL;
+}
+
+/**
+ * Check daily stop using realized + unrealized P&L
+ * Call this periodically with current market prices
+ */
+export function checkDailyStopWithMTM(currentPrices: Map<string, number>): boolean {
+    maybeResetDailyPnL();
+
+    const unrealized = computeUnrealizedPnL(currentPrices);
+    const totalPnL = exposure.dailyPnL + unrealized;
+
+    if (totalPnL < -ENV.MAX_DAILY_LOSS_USD && !exposure.isPaused) {
+        exposure.isPaused = true;
+        exposure.pauseReason = 'Daily loss limit reached (MTM)';
+        Logger.warning(`🛑 Trading paused: Daily MTM loss $${Math.abs(totalPnL).toFixed(2)} exceeds limit $${ENV.MAX_DAILY_LOSS_USD}`);
+        Logger.warning(`   (Realized: $${exposure.dailyPnL.toFixed(2)}, Unrealized: $${unrealized.toFixed(2)})`);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Get open positions summary
+ */
+export function getOpenPositionsSummary(): { count: number; totalCostBasis: number } {
+    let totalCostBasis = 0;
+    for (const pos of openPositions.values()) {
+        totalCostBasis += pos.costBasis;
+    }
+    return { count: openPositions.size, totalCostBasis };
 }
 
 /**
@@ -265,6 +371,11 @@ export default {
     canTrade,
     recordTrade,
     recordPnL,
+    recordOpenPosition,
+    closePosition,
+    computeUnrealizedPnL,
+    checkDailyStopWithMTM,
+    getOpenPositionsSummary,
     updateDataTimestamp,
     pauseTrading,
     resumeTrading,

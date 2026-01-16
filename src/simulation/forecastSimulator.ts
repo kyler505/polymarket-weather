@@ -18,6 +18,38 @@ export interface ForecastConfig {
         noiseScale: number;    // Multiplier for standard sigma (e.g. 1.2x noisier)
         useStudentT: boolean;  // Use fat tails
     };
+    seed?: number;  // Optional random seed for reproducibility
+}
+
+// Seeded PRNG (Mulberry32) for reproducible simulations
+let currentSeed: number | null = null;
+let seededRandom: (() => number) | null = null;
+
+export function setSeed(seed: number): void {
+    currentSeed = seed;
+    seededRandom = mulberry32(seed);
+}
+
+export function clearSeed(): void {
+    currentSeed = null;
+    seededRandom = null;
+}
+
+function mulberry32(a: number): () => number {
+    return function() {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+// Get random number (seeded if available)
+function getRandom(): number {
+    if (seededRandom) {
+        return seededRandom();
+    }
+    return Math.random();
 }
 
 /**
@@ -150,8 +182,8 @@ function getSyntheticForecast(
 
 function boxMuller(): number {
     let u = 0, v = 0;
-    while(u === 0) u = Math.random();
-    while(v === 0) v = Math.random();
+    while(u === 0) u = getRandom();
+    while(v === 0) v = getRandom();
     return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 

@@ -80,8 +80,14 @@ async function processMarket(market: WeatherMarket, prices: Map<string, number>)
 
         // Generate signals for bins with edge
         for (const bin of binAnalysis) {
+            // Adjust edge for expected execution friction (spread/slippage)
+            // For BUY: we pay ask = mid + spread/2, so effective edge is lower
+            // For SELL: we receive bid = mid - spread/2, so effective edge is also lower
+            const EXPECTED_SPREAD = 0.02; // 2% total spread (configurable)
+            const frictionAdjustedEdge = bin.edge - (EXPECTED_SPREAD / 2);
+
             const decision = shouldTrade(
-                bin.edge,
+                frictionAdjustedEdge,  // Use friction-adjusted edge
                 ENV.WEATHER_EDGE_THRESHOLD,
                 bin.fairProbability,
                 bin.isPossible
