@@ -7,11 +7,44 @@ import axios from 'axios';
 import { WeatherForecast, WeatherObservation } from '../interfaces/WeatherMarket';
 import { getStation, getSigmaForLeadDays, WEATHER_API } from '../config/weatherConfig';
 import Logger from '../utils/logger';
+import {
+    buildHybridFeatures,
+    createHybridForecast,
+    HybridModelConfig,
+    HybridModelRuntimeConfig,
+    HybridTrainingSample,
+    runHybridModel,
+} from '../utils/hybridModel';
 
 // Cache for forecasts to reduce API calls
 const forecastCache = new Map<string, { forecast: WeatherForecast; cachedAt: Date }>();
+const historicalForecastCache = new Map<string, { forecast: WeatherForecast; cachedAt: Date }>();
+const hybridForecastCache = new Map<string, { forecast: WeatherForecast; cachedAt: Date }>();
+const trainingDataCache = new Map<string, { data: HybridTrainingSample[]; cachedAt: Date }>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const HISTORICAL_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const HYBRID_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const TRAINING_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const dailyCache = new Map<string, { maxTemp: number; minTemp: number }>();
+
+const getLeadDays = (targetDate: string): number => {
+    const now = new Date();
+    const target = new Date(targetDate);
+    const leadDays = Math.ceil((target.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+    return Math.max(0, leadDays);
+};
+
+const average = (values: Array<number | undefined>): number | undefined => {
+    const filtered = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (filtered.length === 0) return undefined;
+    return filtered.reduce((sum, v) => sum + v, 0) / filtered.length;
+};
+
+const calculateSpread = (values: Array<number | undefined>): number => {
+    const filtered = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (filtered.length < 2) return 0;
+    return Math.max(...filtered) - Math.min(...filtered);
+};
 
 /**
  * Get forecast from NOAA/NWS API
@@ -66,8 +99,7 @@ async function fetchNOAAForecast(lat: number, lon: number, targetDate: string): 
         }
 
         // Calculate lead days
-        const now = new Date();
-        const leadDays = Math.ceil((targetDateObj.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+        const leadDays = getLeadDays(targetDate);
 
         return {
             stationId: '', // Will be filled by caller
@@ -105,9 +137,7 @@ async function fetchOpenMeteoForecast(lat: number, lon: number, targetDate: stri
             return null;
         }
 
-        const targetDateObj = new Date(targetDate);
-        const now = new Date();
-        const leadDays = Math.ceil((targetDateObj.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+        const leadDays = getLeadDays(targetDate);
 
         return {
             stationId: '',
@@ -122,6 +152,58 @@ async function fetchOpenMeteoForecast(lat: number, lon: number, targetDate: stri
         Logger.warning(`Open-Meteo forecast fetch failed: ${error}`);
         return null;
     }
+}
+
+type ForecastSources = {
+    noaa?: WeatherForecast | null;
+    openMeteo?: WeatherForecast | null;
+};
+
+const buildEnsembleForecast = (
+    stationId: string,
+    targetDate: string,
+    forecasts: WeatherForecast[]
+): WeatherForecast | null => {
+    if (forecasts.length === 0) return null;
+
+    const leadDays = forecasts[0].leadDays ?? getLeadDays(targetDate);
+    const forecastHigh = average(forecasts.map(f => f.forecastHigh));
+    const forecastLow = average(forecasts.map(f => f.forecastLow));
+    const highSpread = calculateSpread(forecasts.map(f => f.forecastHigh));
+    const lowSpread = calculateSpread(forecasts.map(f => f.forecastLow));
+
+    const baseSigma = getForecastSigma(leadDays);
+    const sigmaHigh = baseSigma + highSpread * 0.35;
+    const sigmaLow = baseSigma + lowSpread * 0.35;
+
+    return {
+        stationId,
+        targetDate,
+        forecastHigh,
+        forecastLow,
+        source: forecasts.length > 1
+            ? `Ensemble(${forecasts.map(f => f.source).join('+')})`
+            : forecasts[0].source,
+        retrievedAt: new Date(),
+        leadDays,
+        sigmaHigh,
+        sigmaLow,
+    };
+};
+
+async function getForecastSources(stationId: string, targetDate: string): Promise<ForecastSources> {
+    const station = getStation(stationId);
+    if (!station) return {};
+
+    const [noaa, openMeteo] = await Promise.all([
+        fetchNOAAForecast(station.lat, station.lon, targetDate),
+        fetchOpenMeteoForecast(station.lat, station.lon, targetDate),
+    ]);
+
+    if (noaa) noaa.stationId = stationId;
+    if (openMeteo) openMeteo.stationId = stationId;
+
+    return { noaa, openMeteo };
 }
 
 /**
@@ -152,6 +234,9 @@ export async function getForecast(stationId: string, targetDate: string): Promis
 
     if (forecast) {
         forecast.stationId = stationId;
+        const sigma = getForecastSigma(forecast.leadDays);
+        forecast.sigmaHigh = sigma;
+        forecast.sigmaLow = sigma;
         forecastCache.set(cacheKey, { forecast, cachedAt: new Date() });
     }
 
@@ -162,53 +247,67 @@ export async function getForecast(stationId: string, targetDate: string): Promis
  * Get ensemble forecast (combines multiple sources with weighted average)
  */
 export async function getEnsembleForecast(stationId: string, targetDate: string): Promise<WeatherForecast | null> {
+    const sources = await getForecastSources(stationId, targetDate);
+    const forecasts = [sources.noaa, sources.openMeteo].filter(
+        (forecast): forecast is WeatherForecast => Boolean(forecast)
+    );
+
+    return buildEnsembleForecast(stationId, targetDate, forecasts);
+}
+
+async function fetchOpenMeteoHistoricalForecast(
+    lat: number,
+    lon: number,
+    targetDate: string,
+    leadDays: number
+): Promise<WeatherForecast | null> {
+    try {
+        const url = `https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&start_date=${targetDate}&end_date=${targetDate}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`;
+        const response = await axios.get(url, { timeout: 10000 });
+        const daily = response.data.daily;
+        if (!daily || !daily.temperature_2m_max || daily.temperature_2m_max.length === 0) {
+            return null;
+        }
+
+        const sigma = getForecastSigma(leadDays);
+        return {
+            stationId: '',
+            targetDate,
+            forecastHigh: daily.temperature_2m_max[0],
+            forecastLow: daily.temperature_2m_min[0],
+            source: 'Open-Meteo-Hist-Forecast',
+            retrievedAt: new Date(),
+            leadDays,
+            sigmaHigh: sigma,
+            sigmaLow: sigma,
+        };
+    } catch (error) {
+        Logger.warning(`Historical forecast fetch failed: ${error}`);
+        return null;
+    }
+}
+
+export async function getHistoricalForecast(
+    stationId: string,
+    targetDate: string,
+    leadDays: number
+): Promise<WeatherForecast | null> {
+    const cacheKey = `${stationId}:${targetDate}:${leadDays}`;
+    const cached = historicalForecastCache.get(cacheKey);
+    if (cached && (Date.now() - cached.cachedAt.getTime()) < HISTORICAL_CACHE_TTL_MS) {
+        return cached.forecast;
+    }
+
     const station = getStation(stationId);
     if (!station) return null;
 
-    const forecasts: WeatherForecast[] = [];
-
-    // Get NOAA forecast
-    const noaa = await fetchNOAAForecast(station.lat, station.lon, targetDate);
-    if (noaa) {
-        noaa.stationId = stationId;
-        forecasts.push(noaa);
+    const forecast = await fetchOpenMeteoHistoricalForecast(station.lat, station.lon, targetDate, leadDays);
+    if (forecast) {
+        forecast.stationId = stationId;
+        historicalForecastCache.set(cacheKey, { forecast, cachedAt: new Date() });
     }
 
-    // Get Open-Meteo forecast
-    const openMeteo = await fetchOpenMeteoForecast(station.lat, station.lon, targetDate);
-    if (openMeteo) {
-        openMeteo.stationId = stationId;
-        forecasts.push(openMeteo);
-    }
-
-    if (forecasts.length === 0) return null;
-
-    // Average the forecasts
-    let sumHigh = 0, countHigh = 0;
-    let sumLow = 0, countLow = 0;
-    let leadDays = 0;
-
-    for (const f of forecasts) {
-        if (f.forecastHigh !== undefined) {
-            sumHigh += f.forecastHigh;
-            countHigh++;
-        }
-        if (f.forecastLow !== undefined) {
-            sumLow += f.forecastLow;
-            countLow++;
-        }
-        leadDays = f.leadDays;
-    }
-
-    return {
-        stationId,
-        targetDate,
-        forecastHigh: countHigh > 0 ? sumHigh / countHigh : undefined,
-        forecastLow: countLow > 0 ? sumLow / countLow : undefined,
-        source: `Ensemble(${forecasts.map(f => f.source).join('+')})`,
-        retrievedAt: new Date(),
-        leadDays,
-    };
+    return forecast;
 }
 
 /**
@@ -346,15 +445,212 @@ export function simulateForecast(
         source: 'Simulated(Actual+Noise)',
         retrievedAt: new Date(),
         leadDays,
+        sigmaHigh: sigma,
+        sigmaLow: sigma,
     };
+}
+
+export interface HybridForecastOptions {
+    mlEnabled: boolean;
+    lookbackDays: number;
+    minSamples: number;
+    allowSimulatedTraining: boolean;
+    runtime: HybridModelRuntimeConfig;
+    modelConfig: HybridModelConfig;
+    cacheTtlMs: number;
+    trainingCacheTtlMs: number;
+}
+
+const DEFAULT_HYBRID_OPTIONS: HybridForecastOptions = {
+    mlEnabled: false,
+    lookbackDays: 60,
+    minSamples: 25,
+    allowSimulatedTraining: false,
+    runtime: {
+        pythonPath: 'python3',
+        timeoutMs: 15000,
+    },
+    modelConfig: {
+        ridge_alpha: 1.0,
+        knn_k: 7,
+        min_samples: 25,
+        calibration_split: 0.2,
+        clip_delta: 12,
+        sigma_floor: 1.5,
+    },
+    cacheTtlMs: HYBRID_CACHE_TTL_MS,
+    trainingCacheTtlMs: TRAINING_CACHE_TTL_MS,
+};
+
+const buildHybridTrainingData = async (
+    stationId: string,
+    lookbackDays: number,
+    leadDays: number,
+    allowSimulatedTraining: boolean,
+    trainingCacheTtlMs: number
+): Promise<HybridTrainingSample[]> => {
+    const cacheKey = `${stationId}:${lookbackDays}:${leadDays}:${allowSimulatedTraining ? 'sim' : 'nosim'}`;
+    const cached = trainingDataCache.get(cacheKey);
+    if (cached && (Date.now() - cached.cachedAt.getTime()) < trainingCacheTtlMs) {
+        return cached.data;
+    }
+
+    const station = getStation(stationId);
+    if (!station) return [];
+
+    const samples: HybridTrainingSample[] = [];
+    const today = new Date();
+
+    for (let i = 1; i <= lookbackDays; i++) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+
+        const actuals = await getHistoricalDailyData(stationId, dateStr);
+        if (!actuals) continue;
+
+        let forecast = await getHistoricalForecast(stationId, dateStr, leadDays);
+        if (!forecast && allowSimulatedTraining) {
+            forecast = simulateForecast({ maxTemp: actuals.maxTemp, minTemp: actuals.minTemp }, dateStr, leadDays);
+            forecast.source = 'SimulatedTraining';
+        }
+
+        if (!forecast || forecast.forecastHigh === undefined || forecast.forecastLow === undefined) {
+            continue;
+        }
+
+        forecast.stationId = stationId;
+
+        const features = buildHybridFeatures({
+            station,
+            date,
+            leadDays,
+            ensemble: forecast,
+            openMeteo: forecast,
+        });
+
+        samples.push({
+            date: dateStr,
+            features,
+            target_high: actuals.maxTemp,
+            target_low: actuals.minTemp,
+        });
+    }
+
+    trainingDataCache.set(cacheKey, { data: samples, cachedAt: new Date() });
+    return samples;
+};
+
+export async function getHybridForecast(
+    stationId: string,
+    targetDate: string,
+    options: Partial<HybridForecastOptions> = {}
+): Promise<WeatherForecast | null> {
+    const mergedOptions: HybridForecastOptions = {
+        ...DEFAULT_HYBRID_OPTIONS,
+        ...options,
+        runtime: {
+            ...DEFAULT_HYBRID_OPTIONS.runtime,
+            ...options.runtime,
+        },
+        modelConfig: {
+            ...DEFAULT_HYBRID_OPTIONS.modelConfig,
+            ...options.modelConfig,
+        },
+    };
+
+    const cacheKey = `${stationId}:${targetDate}:hybrid`;
+    const cached = hybridForecastCache.get(cacheKey);
+    if (cached && (Date.now() - cached.cachedAt.getTime()) < mergedOptions.cacheTtlMs) {
+        return cached.forecast;
+    }
+
+    const station = getStation(stationId);
+    if (!station) return null;
+
+    const sources = await getForecastSources(stationId, targetDate);
+    const forecasts = [sources.noaa, sources.openMeteo].filter(
+        (forecast): forecast is WeatherForecast => Boolean(forecast)
+    );
+    const ensemble = buildEnsembleForecast(stationId, targetDate, forecasts);
+    if (!ensemble) return null;
+
+    if (!mergedOptions.mlEnabled) {
+        return ensemble;
+    }
+
+    if (ensemble.forecastHigh === undefined || ensemble.forecastLow === undefined) {
+        Logger.debug('Hybrid ML skipped - missing baseline forecast values');
+        return ensemble;
+    }
+
+    const leadDays = ensemble.leadDays;
+    const trainingData = await buildHybridTrainingData(
+        stationId,
+        mergedOptions.lookbackDays,
+        leadDays,
+        mergedOptions.allowSimulatedTraining,
+        mergedOptions.trainingCacheTtlMs
+    );
+
+    if (trainingData.length < mergedOptions.minSamples) {
+        Logger.debug(`Hybrid ML skipped - insufficient training data (${trainingData.length} samples)`);
+        return ensemble;
+    }
+
+    const features = buildHybridFeatures({
+        station,
+        date: new Date(targetDate),
+        leadDays,
+        ensemble,
+        noaa: sources.noaa || undefined,
+        openMeteo: sources.openMeteo || undefined,
+    });
+
+    const sigmaFallback = ensemble.sigmaHigh ?? getForecastSigma(leadDays);
+    const modelConfig: HybridModelConfig = {
+        ...mergedOptions.modelConfig,
+        min_samples: mergedOptions.minSamples,
+        sigma_fallback: sigmaFallback,
+    };
+
+    const request = {
+        station: {
+            id: station.id,
+            lat: station.lat,
+            lon: station.lon,
+        },
+        target_date: targetDate,
+        lead_days: leadDays,
+        features,
+        training_data: trainingData,
+        config: modelConfig,
+    };
+
+    const response = await runHybridModel(request, mergedOptions.runtime);
+    if (!response || response.error) {
+        Logger.debug('Hybrid ML response unavailable, using ensemble forecast');
+        return ensemble;
+    }
+
+    const hybrid = createHybridForecast(ensemble, response);
+    const finalForecast = {
+        ...hybrid,
+        source: `HybridML(${ensemble.source})`,
+    };
+
+    hybridForecastCache.set(cacheKey, { forecast: finalForecast, cachedAt: new Date() });
+    return finalForecast;
 }
 
 export default {
     getForecast,
     getEnsembleForecast,
+    getHybridForecast,
     getCurrentObservation,
     getDailyMaxSoFar,
     getForecastSigma,
     getHistoricalDailyData,
+    getHistoricalForecast,
     simulateForecast,
 };

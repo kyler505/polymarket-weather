@@ -102,7 +102,9 @@ export function computeBinProbabilities(
     }
 
     // Get sigma based on lead time
-    const sigma = getForecastSigma(forecast.leadDays);
+    const sigma = metric === 'DAILY_MAX_TEMP'
+        ? (forecast.sigmaHigh ?? getForecastSigma(forecast.leadDays))
+        : (forecast.sigmaLow ?? getForecastSigma(forecast.leadDays));
 
     // First pass: compute raw probabilities
     const rawProbs = new Map<string, number>();

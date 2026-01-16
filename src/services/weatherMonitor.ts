@@ -6,7 +6,7 @@
 import { ENV } from '../config/env';
 import { WeatherMarket, WeatherTradeSignal, BinProbability } from '../interfaces/WeatherMarket';
 import { discoverWeatherMarkets, getUpcomingMarkets, refreshMarketPrices } from './weatherMarketDiscovery';
-import { getForecast, getEnsembleForecast, getDailyMaxSoFar } from './weatherDataService';
+import { getHybridForecast, getDailyMaxSoFar } from './weatherDataService';
 import { analyzeBinProbabilities, shouldTrade, kellyFraction } from './probabilityEngine';
 import { canTrade, updateDataTimestamp } from './weatherRiskManager';
 import Logger from '../utils/logger';
@@ -56,7 +56,27 @@ async function processMarket(market: WeatherMarket, prices: Map<string, number>)
         const isDayOf = leadDays <= 0;
 
         // Get forecast
-        const forecast = await getEnsembleForecast(market.stationId, market.targetDate);
+        const forecast = await getHybridForecast(market.stationId, market.targetDate, {
+            mlEnabled: ENV.WEATHER_ML_ENABLED,
+            lookbackDays: ENV.WEATHER_ML_LOOKBACK_DAYS,
+            minSamples: ENV.WEATHER_ML_MIN_SAMPLES,
+            allowSimulatedTraining: ENV.WEATHER_ML_ALLOW_SIMULATED_TRAINING,
+            cacheTtlMs: ENV.WEATHER_ML_CACHE_TTL_MS,
+            trainingCacheTtlMs: ENV.WEATHER_ML_TRAINING_CACHE_TTL_MS,
+            runtime: {
+                pythonPath: ENV.WEATHER_ML_PYTHON_PATH,
+                timeoutMs: ENV.WEATHER_ML_TIMEOUT_MS,
+            },
+            modelConfig: {
+                ridge_alpha: ENV.WEATHER_ML_RIDGE_ALPHA,
+                knn_k: ENV.WEATHER_ML_KNN_K,
+                min_samples: ENV.WEATHER_ML_MIN_SAMPLES,
+                calibration_split: ENV.WEATHER_ML_CALIBRATION_SPLIT,
+                clip_delta: ENV.WEATHER_ML_CLIP_DELTA,
+                sigma_floor: ENV.WEATHER_ML_SIGMA_FLOOR,
+                seed: ENV.WEATHER_ML_SEED,
+            },
+        });
         if (!forecast) {
             Logger.debug(`No forecast available for ${market.stationId} on ${market.targetDate}`);
             return;
@@ -76,7 +96,8 @@ async function processMarket(market: WeatherMarket, prices: Map<string, number>)
 
         // Log analysis for debugging
         Logger.debug(`Market: ${market.title.substring(0, 40)}...`);
-        Logger.debug(`  Forecast: ${forecast.forecastHigh}°F (σ=${forecast.leadDays}d)`);
+        const sigma = forecast.sigmaHigh ?? forecast.leadDays;
+        Logger.debug(`  Forecast: ${forecast.forecastHigh}°F (σ=${sigma})`);
 
         // Generate signals for bins with edge
         for (const bin of binAnalysis) {

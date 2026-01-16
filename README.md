@@ -10,6 +10,7 @@ A specialized trading bot that discovers weather markets on Polymarket, computes
 - **Day-of Conditioning**: Updates probabilities based on observed max-so-far temperatures
 - **Edge Trading**: Executes limit orders when market probability differs from fair value
 - **Risk Management**: Per-market, per-region, and per-date exposure limits with kill-switches
+- **Hybrid ML Forecasting**: Optional Python bias-correction layer for ensemble forecasts
 - **Discord Integration**: Real-time monitoring and control via Discord commands
 
 ## How It Works
@@ -56,6 +57,11 @@ PRIVATE_KEY=your_private_key
 WEATHER_EDGE_THRESHOLD=0.05          # 5% edge required to trade
 WEATHER_MAX_LEAD_DAYS=7              # Only trade markets within 7 days
 WEATHER_DRY_RUN=true                 # Set to false to execute real trades
+
+# Hybrid ML Forecasting (optional)
+WEATHER_ML_ENABLED=false
+WEATHER_ML_LOOKBACK_DAYS=60
+WEATHER_ML_MIN_SAMPLES=25
 
 # Risk Limits
 MAX_EXPOSURE_PER_MARKET_USD=50       # Max $50 per market

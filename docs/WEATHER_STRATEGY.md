@@ -142,6 +142,18 @@ We combine multiple forecast sources for robustness:
 
 ---
 
+## Hybrid ML Bias Correction (Optional)
+
+To improve station-level accuracy, the bot can apply a lightweight ML bias-correction layer:
+
+- Baseline: NOAA + Open-Meteo ensemble forecast
+- ML layer: Ridge regression (MOS-style) + kNN analogs
+- Blending: Weights are set by calibration RMSE
+
+This hybrid approach preserves the physics-based forecast while correcting local biases and calibrating uncertainty.
+
+---
+
 ## Risk Controls
 
 ### Per-Market Exposure

@@ -7,16 +7,34 @@
 
 import axios from 'axios';
 import { WeatherForecast } from '../interfaces/WeatherMarket';
-import { getForecastSigma } from '../services/weatherDataService';
+import { getForecastSigma, getHistoricalDailyData } from '../services/weatherDataService';
 import { getStation } from '../config/weatherConfig';
 import Logger from '../utils/logger';
+import {
+    buildHybridFeatures,
+    createHybridForecast,
+    HybridTrainingSample,
+    runHybridModel,
+} from '../utils/hybridModel';
 
 export interface ForecastConfig {
-    mode: 'REAL' | 'SYNTHETIC';
+    mode: 'REAL' | 'SYNTHETIC' | 'HYBRID_ML';
     syntheticParams?: {
         biasMean: number;      // e.g. 0.5 degrees warm bias
         noiseScale: number;    // Multiplier for standard sigma (e.g. 1.2x noisier)
         useStudentT: boolean;  // Use fat tails
+    };
+    hybridParams?: {
+        lookbackDays: number;
+        minSamples: number;
+        ridgeAlpha: number;
+        knnK: number;
+        calibrationSplit: number;
+        clipDelta: number;
+        sigmaFloor: number;
+        pythonPath?: string;
+        timeoutMs?: number;
+        seed?: number;
     };
     seed?: number;  // Optional random seed for reproducibility
 }
@@ -177,6 +195,127 @@ function getSyntheticForecast(
         source: `Synthetic(Sigma=${sigma.toFixed(1)})`,
         retrievedAt: new Date(),
         leadDays,
+        sigmaHigh: sigma,
+        sigmaLow: sigma,
+    };
+}
+
+async function buildHybridTrainingSamples(
+    stationId: string,
+    targetDate: string,
+    leadDays: number,
+    lookbackDays: number,
+    syntheticParams?: ForecastConfig['syntheticParams']
+): Promise<HybridTrainingSample[]> {
+    const station = getStation(stationId);
+    if (!station) return [];
+
+    const samples: HybridTrainingSample[] = [];
+    const target = new Date(targetDate);
+
+    for (let i = 1; i <= lookbackDays; i++) {
+        const date = new Date(target);
+        date.setDate(target.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+
+        const actuals = await getHistoricalDailyData(stationId, dateStr);
+        if (!actuals) continue;
+
+        const synthetic = getSyntheticForecast(actuals.maxTemp, actuals.minTemp, dateStr, leadDays, syntheticParams);
+        synthetic.stationId = stationId;
+
+        const features = buildHybridFeatures({
+            station,
+            date,
+            leadDays,
+            ensemble: synthetic,
+            openMeteo: synthetic,
+        });
+
+        samples.push({
+            date: dateStr,
+            features,
+            target_high: actuals.maxTemp,
+            target_low: actuals.minTemp,
+        });
+    }
+
+    return samples;
+}
+
+async function getHybridSimulatedForecast(
+    stationId: string,
+    targetDate: string,
+    leadDays: number,
+    actuals: { max: number; min: number },
+    config: ForecastConfig
+): Promise<WeatherForecast> {
+    const hybridParams = config.hybridParams;
+    const lookbackDays = hybridParams?.lookbackDays ?? 45;
+    const minSamples = hybridParams?.minSamples ?? 20;
+
+    const station = getStation(stationId);
+    if (!station) {
+        return getSyntheticForecast(actuals.max, actuals.min, targetDate, leadDays, config.syntheticParams);
+    }
+
+    const baseline = getSyntheticForecast(actuals.max, actuals.min, targetDate, leadDays, config.syntheticParams);
+    baseline.stationId = stationId;
+
+    const trainingData = await buildHybridTrainingSamples(
+        stationId,
+        targetDate,
+        leadDays,
+        lookbackDays,
+        config.syntheticParams
+    );
+
+    if (trainingData.length < minSamples) {
+        return baseline;
+    }
+
+    const features = buildHybridFeatures({
+        station,
+        date: new Date(targetDate),
+        leadDays,
+        ensemble: baseline,
+        openMeteo: baseline,
+    });
+
+    const sigmaFallback = baseline.sigmaHigh ?? getForecastSigma(leadDays);
+
+    const response = await runHybridModel(
+        {
+            station: { id: station.id, lat: station.lat, lon: station.lon },
+            target_date: targetDate,
+            lead_days: leadDays,
+            features,
+            training_data: trainingData,
+            config: {
+                ridge_alpha: hybridParams?.ridgeAlpha ?? 1.0,
+                knn_k: hybridParams?.knnK ?? 7,
+                min_samples: minSamples,
+                calibration_split: hybridParams?.calibrationSplit ?? 0.2,
+                clip_delta: hybridParams?.clipDelta ?? 12,
+                sigma_floor: hybridParams?.sigmaFloor ?? 1.5,
+                sigma_fallback: sigmaFallback,
+                seed: hybridParams?.seed ?? config.seed ?? 42,
+            },
+        },
+        {
+            pythonPath: hybridParams?.pythonPath || 'python3',
+            timeoutMs: hybridParams?.timeoutMs ?? 15000,
+        }
+    );
+
+    if (!response || response.error) {
+        return baseline;
+    }
+
+    const hybrid = createHybridForecast(baseline, response);
+    return {
+        ...hybrid,
+        source: `HybridML(${baseline.source})`,
     };
 }
 
@@ -197,6 +336,10 @@ export async function getSimulatedForecast(
     actuals: { max: number; min: number },
     config: ForecastConfig
 ): Promise<WeatherForecast> {
+    if (config.mode === 'HYBRID_ML') {
+        return getHybridSimulatedForecast(stationId, targetDate, leadDays, actuals, config);
+    }
+
     if (config.mode === 'REAL') {
         const real = await getRealHistoricalForecast(stationId, targetDate, leadDays);
         if (real) return real;

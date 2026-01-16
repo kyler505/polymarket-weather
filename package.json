@@ -30,7 +30,8 @@
         "lint:fix": "eslint --fix .",
         "format": "prettier --write .",
         "simulate": "node dist/scripts/simulateHistorical.js",
-        "optimize": "node dist/scripts/optimizeStrategy.js"
+    "optimize": "node dist/scripts/optimizeStrategy.js",
+    "optimize-hybrid": "node dist/scripts/optimizeHybridModel.js"
     },
     "keywords": [
         "polymarket",
